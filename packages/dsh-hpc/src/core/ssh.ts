@@ -3,7 +3,10 @@ import { Client, type ConnectConfig } from "ssh2";
 import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
+import { answerPrompts, formatAuthFailure, type PromptAnswerOptions } from "./auth.js";
 import { HpcError, shellQuote, type ExecResult, type ServerSpec } from "./types.js";
+
+export { isVerificationPrompt } from "./auth.js";
 
 /** Credential reference holding a server password (never stored in config). */
 export function passwordRefFor(id: string): string {
@@ -41,15 +44,6 @@ export type ConnectOptions = {
   /** One-time verification code for keyboard-interactive (2FA) prompts. */
   verificationCode?: string;
 };
-
-/** True when a keyboard-interactive prompt asks for a one-time verification code. */
-export function isVerificationPrompt(prompt: string): boolean {
-  const codeSignal =
-    /(verification|one[- ]?time|otp|authenticator|passcode|dynamic|token|code|验证码|动态码|动态|令牌)/i.test(prompt);
-  // "One-time password" is a code prompt; a plain password/passphrase prompt is not.
-  const passwordSignal = /password|passphrase|密码/i.test(prompt) && !/one[- ]?time/i.test(prompt);
-  return codeSignal && !passwordSignal;
-}
 
 export async function connect(ctx: Context, server: ServerSpec, options: ConnectOptions): Promise<Connection> {
   // Resolve auth material once; each attempt reuses it.
@@ -107,35 +101,30 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
       if (effectivePassword !== undefined) connectConfig.password = effectivePassword;
 
       client.on("keyboard-interactive", (_name, _instructions, _lang, prompts, finish) => {
-        const answers = prompts.map((rawPrompt: unknown) => {
-          const prompt =
-            typeof rawPrompt === "string" ? rawPrompt : String((rawPrompt as { prompt?: string })?.prompt ?? "");
-          if (prompt && promptsSeen.length < 8 && !promptsSeen.includes(prompt)) promptsSeen.push(prompt);
-          if (isVerificationPrompt(prompt)) {
-            sawVerificationPrompt = true;
-            return code ?? interactiveSecret ?? "";
-          }
-          return interactiveSecret ?? "";
-        });
-        finish(answers);
+        const result = answerPrompts(prompts, {
+          ...(interactiveSecret !== undefined ? { secret: interactiveSecret } : {}),
+          ...(code !== undefined ? { code } : {}),
+          recordPrompt: (prompt: string) => {
+            if (prompt && promptsSeen.length < 8 && !promptsSeen.includes(prompt)) promptsSeen.push(prompt);
+          },
+        } as PromptAnswerOptions);
+        if (result.sawCodePrompt) sawVerificationPrompt = true;
+        finish(result.answers);
       });
 
-      const diagnostics = () => {
-        const prompts = promptsSeen.length > 0 ? ` Keyboard-interactive prompts seen: ${JSON.stringify(promptsSeen)}.` : " No keyboard-interactive prompt was offered by the server.";
-        const hint = code
-          ? sawVerificationPrompt
-            ? " The code was supplied but the server still rejected authentication (code may have expired or the password is wrong)."
-            : " The code was supplied but no verification-code prompt appeared; the server may expect the code appended to the password."
-          : ` If this server requires a one-time code, ask the user for the current 6-digit code, then call server_connect(server: "${server.id}", otp: "<code>").`;
-        return prompts + hint;
-      };
+      const diagnostics = (message: string) =>
+        formatAuthFailure({
+          serverId: server.id,
+          host: server.host,
+          port: server.port ?? 22,
+          message,
+          promptsSeen,
+          codeProvided: Boolean(code),
+          sawCodePrompt: sawVerificationPrompt,
+        });
 
       client.once("error", (error: Error) => {
-        reject(
-          new HpcError(
-            `Connection to "${server.id}" (${server.host}:${server.port ?? 22}) failed: ${error.message}.${diagnostics()}`,
-          ),
-        );
+        reject(new HpcError(diagnostics(error.message)));
       });
       client.once("ready", () => {
         resolve({ client, fingerprint: observed, close: () => client.end() });
