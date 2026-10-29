@@ -61,7 +61,16 @@ function ledgerPath(id: string): string {
 
 export function saveJob(record: JobRecord): void {
   mkdirSync(ledgerDir(), { recursive: true });
-  writeFileSync(ledgerPath(record.id), JSON.stringify(record, null, 2), "utf8");
+  // A watcher may write a record snapshot taken before the caller attached
+  // its own watchJobId; never lose that field on a concurrent save.
+  let merged = record;
+  try {
+    const previous = JSON.parse(readFileSync(ledgerPath(record.id), "utf8")) as JobRecord;
+    if (!record.watchJobId && previous.watchJobId) merged = { ...record, watchJobId: previous.watchJobId };
+  } catch {
+    /* first write */
+  }
+  writeFileSync(ledgerPath(record.id), JSON.stringify(merged, null, 2), "utf8");
 }
 
 export function loadJob(id: string): JobRecord | undefined {
