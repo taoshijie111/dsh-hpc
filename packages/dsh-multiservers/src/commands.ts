@@ -85,8 +85,8 @@ export function registerCommands(
   pool: ConnectionPool,
   sessions: SessionRegistry,
 ): Array<() => void> {
-  return [
-    ctx.commands.register({
+  const disposers: Array<() => void> = [];
+  disposers.push(ctx.commands.register({
       name: "servers",
       description: "查看已配置服务器的连接、会话与端口转发状态",
       handler: async (): Promise<CommandResult> => ({
@@ -95,7 +95,7 @@ export function registerCommands(
       }),
     }),
     ctx.commands.register({
-      name: "server",
+      name: "usage",
       description: "查看某台服务器的 CPU / 内存 / GPU / 磁盘 / 作业",
       input: { hint: "<server-id>" },
       handler: async ({ rawInput }): Promise<CommandResult> => {
@@ -114,8 +114,9 @@ export function registerCommands(
           return { kind: "error", text: error instanceof MultiserversError ? error.message : String(error) };
         }
       },
-    }),
-  ];
+    }));
+  console.log(`[multiservers] slash commands registered: ${disposers.length}`);
+  return disposers;
 }
 
 export { pad };
