@@ -38,6 +38,13 @@ function showFrame(url) {
   els.close.disabled = false;
 }
 
+// Safety net: the frame's own load event clears the overlay even if a state
+// transition above is missed. A blank frame keeps no spinner forever.
+els.frame.addEventListener("load", () => {
+  els.loading.hidden = true;
+  els.placeholder.hidden = true;
+});
+
 function clearFrame() {
   els.frame.removeAttribute("src");
   els.frame.hidden = true;

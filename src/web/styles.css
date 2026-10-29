@@ -14,6 +14,12 @@
   box-sizing: border-box;
 }
 
+/* Author `display` rules below would otherwise beat the UA [hidden] rule and
+   keep the loading overlay visible forever. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
