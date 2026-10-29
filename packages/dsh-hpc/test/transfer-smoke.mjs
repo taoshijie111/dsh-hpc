@@ -16,7 +16,7 @@ if (__need.some((key) => !process.env[key])) {
 }
 
 
-const serversToTest = (process.env.HPC_TEST_SERVERS ?? "bare-test,Slurm 测试机").split(",").map((value) => value.trim()).filter(Boolean);
+const serversToTest = (process.env.HPC_TEST_SERVERS ?? "bare-test,slurm").split(",").map((value) => value.trim()).filter(Boolean);
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");
