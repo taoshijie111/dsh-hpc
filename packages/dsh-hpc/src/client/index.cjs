@@ -617,11 +617,27 @@ window.__ModuleLoader__.load({
 
       const update = (patch) => setDraft((current) => ({ ...current, ...patch }));
 
+      const explainSaveFailure = async () => {
+        try {
+          const response = await fetch("/api/hpc/config-state", { headers: { "x-hpc-request": "1" } });
+          const body = await response.json().catch(() => ({}));
+          if (body && body.writable === false && body.error) {
+            const hint = /overridden by a home patch|command-line overlay/i.test(body.error)
+              ? "；本插件被 profile 的 cordis.patch.yml 覆盖，配置只读。请移除 patch 注入，改用标准插件安装方式（dsh plugin add 或插件管理器）后重启 DSH。"
+              : "";
+            return `${body.error}${hint}`;
+          }
+        } catch {
+          /* diagnostics are best-effort */
+        }
+        return "设置服务拒绝了本次写入（如果本插件是通过 cordis.patch.yml 注入的，请改用标准插件安装方式）";
+      };
+
       const writeServers = async (next) => {
         setBusy(true);
         try {
           const accepted = await form.set("servers", next);
-          if (!accepted) setStatus("保存失败，请稍后重试");
+          if (!accepted) setStatus(`保存失败：${await explainSaveFailure()}`);
           return accepted;
         } catch (failure) {
           setStatus(`保存失败：${(failure && failure.message) || failure}`);

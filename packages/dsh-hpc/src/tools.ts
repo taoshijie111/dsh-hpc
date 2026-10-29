@@ -33,7 +33,17 @@ export async function writeServers(ctx: Context, servers: ServerSpec[]): Promise
     );
   }
   const own = settings.describe().find((entry) => entry.ns === PLUGIN_ID);
-  await settings.update(PLUGIN_ID, { servers }, own?.revision);
+  try {
+    await settings.update(PLUGIN_ID, { servers }, own?.revision);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/overridden by a home patch|command-line overlay/i.test(message)) {
+      throw new HpcError(
+        `${message}. This plugin is injected through the profile's cordis.patch.yml, which makes its configuration read-only; remove that injection and install it with "dsh plugin add" or the plugin manager.`,
+      );
+    }
+    throw error;
+  }
 }
 
 const CAPABILITY_COMMAND = [

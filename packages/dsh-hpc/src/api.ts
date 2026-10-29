@@ -424,5 +424,23 @@ export function registerApi(
     },
   });
 
-  return [status, usage, detect];
+  const configState = webServer.register({
+    kind: "exact",
+    path: "/api/hpc/config-state",
+    handler: async (req, res) => {
+      if (!allowed(req)) return json(res, 403, { error: "forbidden" });
+      const settings = ctxForApi?.get("settings") as SettingsLike | undefined;
+      if (!settings) return json(res, 200, { writable: false, error: "the settings service is not mounted" });
+      try {
+        const own = settings.describe().find((entry) => entry.ns === "hpc");
+        // A no-op merge proves whether the settings service will accept writes for this entry.
+        await settings.update("hpc", {}, own?.revision);
+        return json(res, 200, { writable: true });
+      } catch (error) {
+        return json(res, 200, { writable: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+  });
+
+  return [status, usage, detect, configState];
 }

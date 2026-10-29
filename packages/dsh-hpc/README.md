@@ -54,7 +54,13 @@ npm run build
 dsh plugin --profile web add "$PWD/packages/dsh-hpc"   # or the built .tgz
 ```
 
-Restart DSH, then open **Settings → 服务器**.
+Restart DSH, then open **Settings → dsh-hpc**.
+
+> **Do not inject the plugin through the profile's `cordis.patch.yml`.** A patch-layer entry
+> overrides plugin configuration, so the settings page refuses to save and reports
+> `Configuration for "hpc" is overridden by a home patch or command-line overlay`. Install it
+> as a bundle (`dsh plugin add`, a local directory/tarball, or the desktop plugin manager) and
+> let the settings page own the configuration.
 
 ### Troubleshooting the install
 
