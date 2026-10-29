@@ -45,6 +45,23 @@ function sftpOf(client: Client): Promise<SFTPWrapper> {
   });
 }
 
+/**
+ * Run one transfer operation on a dedicated SFTP channel and always close it.
+ * Leaking channels exhausts the server's MaxSessions after a few files.
+ */
+async function withSftp<T>(client: Client, task: (sftp: SFTPWrapper) => Promise<T>): Promise<T> {
+  const sftp = await sftpOf(client);
+  try {
+    return await task(sftp);
+  } finally {
+    try {
+      sftp.end();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
 function statSize(sftp: SFTPWrapper, path: string): Promise<number | null> {
   return new Promise((resolve) => {
     sftp.stat(path, (error, stats) => {
@@ -229,38 +246,39 @@ export async function uploadWithResume(
   options: TransferOptions,
 ): Promise<TransferResult> {
   if (!existsSync(localPath)) throw new MultiserversError(`Local path not found: ${localPath}`);
-  const sftp = await sftpOf(client);
-  if (!statSync(localPath).isDirectory()) {
-    return { path: remotePath, files: 1, ...(await uploadFile(client, sftp, localPath, remotePath, options)) };
-  }
+  return withSftp(client, async (sftp) => {
+    if (!statSync(localPath).isDirectory()) {
+      return { path: remotePath, files: 1, ...(await uploadFile(client, sftp, localPath, remotePath, options)) };
+    }
 
-  const files = walkLocal(localPath);
-  await mkdirRemote(sftp, remotePath);
-  let bytes = 0;
-  let resumed = false;
-  let skippedAll = files.length > 0;
-  let verifiedAll = true;
-  let lastSha: string | null = null;
-  for (const file of files) {
-    shouldAbort(options.signal);
-    const target = posix.join(remotePath, file.relative);
-    await mkdirRemote(sftp, posix.dirname(target));
-    const result = await uploadFile(client, sftp, file.absolute, target, options);
-    bytes += result.bytes;
-    resumed ||= result.resumed;
-    skippedAll &&= result.skipped;
-    verifiedAll &&= result.verified;
-    lastSha = result.sha256;
-  }
-  return {
-    path: remotePath,
-    files: files.length,
-    bytes,
-    resumed,
-    skipped: skippedAll,
-    sha256: lastSha,
-    verified: verifiedAll,
-  };
+    const files = walkLocal(localPath);
+    await mkdirRemote(sftp, remotePath);
+    let bytes = 0;
+    let resumed = false;
+    let skippedAll = files.length > 0;
+    let verifiedAll = true;
+    let lastSha: string | null = null;
+    for (const file of files) {
+      shouldAbort(options.signal);
+      const target = posix.join(remotePath, file.relative);
+      await mkdirRemote(sftp, posix.dirname(target));
+      const result = await uploadFile(client, sftp, file.absolute, target, options);
+      bytes += result.bytes;
+      resumed ||= result.resumed;
+      skippedAll &&= result.skipped;
+      verifiedAll &&= result.verified;
+      lastSha = result.sha256;
+    }
+    return {
+      path: remotePath,
+      files: files.length,
+      bytes,
+      resumed,
+      skipped: skippedAll,
+      sha256: lastSha,
+      verified: verifiedAll,
+    };
+  });
 }
 
 async function downloadFile(
@@ -327,40 +345,41 @@ export async function downloadWithResume(
   localPath: string,
   options: TransferOptions,
 ): Promise<TransferResult> {
-  const sftp = await sftpOf(client);
-  if (!(await isRemoteDirectory(sftp, remotePath))) {
-    return { path: localPath, files: 1, ...(await downloadFile(client, sftp, remotePath, localPath, options)) };
-  }
-
-  const entries = await walkRemote(sftp, remotePath);
-  mkdirSync(localPath, { recursive: true });
-  let bytes = 0;
-  let resumed = false;
-  let skippedAll = entries.some((entry) => !entry.isDirectory);
-  let verifiedAll = true;
-  let lastSha: string | null = null;
-  for (const entry of entries) {
-    shouldAbort(options.signal);
-    const target = join(localPath, entry.relative);
-    if (entry.isDirectory) {
-      mkdirSync(target, { recursive: true });
-      continue;
+  return withSftp(client, async (sftp) => {
+    if (!(await isRemoteDirectory(sftp, remotePath))) {
+      return { path: localPath, files: 1, ...(await downloadFile(client, sftp, remotePath, localPath, options)) };
     }
-    mkdirSync(dirname(target), { recursive: true });
-    const result = await downloadFile(client, sftp, posix.join(remotePath, entry.relative), target, options);
-    bytes += result.bytes;
-    resumed ||= result.resumed;
-    skippedAll &&= result.skipped;
-    verifiedAll &&= result.verified;
-    lastSha = result.sha256;
-  }
-  return {
-    path: localPath,
-    files: entries.filter((entry) => !entry.isDirectory).length,
-    bytes,
-    resumed,
-    skipped: skippedAll,
-    sha256: lastSha,
-    verified: verifiedAll,
-  };
+
+    const entries = await walkRemote(sftp, remotePath);
+    mkdirSync(localPath, { recursive: true });
+    let bytes = 0;
+    let resumed = false;
+    let skippedAll = entries.some((entry) => !entry.isDirectory);
+    let verifiedAll = true;
+    let lastSha: string | null = null;
+    for (const entry of entries) {
+      shouldAbort(options.signal);
+      const target = join(localPath, entry.relative);
+      if (entry.isDirectory) {
+        mkdirSync(target, { recursive: true });
+        continue;
+      }
+      mkdirSync(dirname(target), { recursive: true });
+      const result = await downloadFile(client, sftp, posix.join(remotePath, entry.relative), target, options);
+      bytes += result.bytes;
+      resumed ||= result.resumed;
+      skippedAll &&= result.skipped;
+      verifiedAll &&= result.verified;
+      lastSha = result.sha256;
+    }
+    return {
+      path: localPath,
+      files: entries.filter((entry) => !entry.isDirectory).length,
+      bytes,
+      resumed,
+      skipped: skippedAll,
+      sha256: lastSha,
+      verified: verifiedAll,
+    };
+  });
 }

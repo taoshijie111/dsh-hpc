@@ -39,7 +39,8 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-client.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node test/tools-smoke.mjs",
-    "test:session": "node test/session-smoke.mjs"
+    "test:session": "node test/session-smoke.mjs",
+    "test:transfer": "node test/transfer-smoke.mjs"
   },
   "dependencies": {
     "ssh2": "^1.17.0"
