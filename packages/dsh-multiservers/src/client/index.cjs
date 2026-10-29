@@ -284,20 +284,21 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       const page = { form: ctx.configForms.get(NS), remote: ctx.remote };
+      // Registered without the served-namespace guard so the page is visible even
+      // when the Host settings namespace is briefly unavailable; the card reports
+      // that state itself instead of disappearing silently.
       ctx.effect(
         () =>
-          ctx.configForms.whileServed([NS], () =>
-            ctx.slots.inject("settings.section", () =>
-              ctx.slots.register(
-                {
-                  name: "settings.section",
-                  id: "multiservers",
-                  order: 40,
-                  label: () => "Servers",
-                  inject: () => page,
-                },
-                ServersSection,
-              ),
+          ctx.slots.inject("settings.section", () =>
+            ctx.slots.register(
+              {
+                name: "settings.section",
+                id: "multiservers",
+                order: 40,
+                label: () => "Servers",
+                inject: () => page,
+              },
+              ServersSection,
             ),
           ),
         "dsh-multiservers: servers settings section",
