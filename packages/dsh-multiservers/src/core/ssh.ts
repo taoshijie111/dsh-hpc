@@ -34,6 +34,8 @@ export type Connection = {
 
 export type ConnectOptions = {
   connectTimeoutMs: number;
+  /** TCP keepalive probe interval; 0 disables. */
+  keepaliveIntervalMs?: number;
   /** Fail unless the host key matches this pinned fingerprint. */
   expectedFingerprint?: string | null;
 };
@@ -50,7 +52,7 @@ export async function connect(
     port: server.port ?? 22,
     username: server.username,
     readyTimeout: options.connectTimeoutMs,
-    keepaliveInterval: 15_000,
+    keepaliveInterval: options.keepaliveIntervalMs ?? 30_000,
     hostVerifier: (rawKey: Buffer) => {
       observed = fingerprintOf(rawKey);
       const expected = options.expectedFingerprint;

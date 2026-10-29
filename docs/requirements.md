@@ -1,80 +1,157 @@
-# 需求规格 v1.0 — DSH 服务器管理插件
+# 产品需求 v1.3 — DSH 服务器管理插件（`dsh-multiservers`）
 
 | 项 | 内容 |
 | --- | --- |
-| 定位 | **DeepSeek Harness 插件**：管理远端服务器并暴露操作协议（工具）。不做独立 UI、不做多 agent 会话协同、不做项目内核 |
-| 契约基线 | DSH `0.2.1-rc.2` 及以上（已在桌面端 `0.2.1-rc.3` 与 npm CLI `0.2.1-rc.2` 验证） |
-| 形态 | 一个 bundle 包 `dsh-multiservers`：Host 半（Config + 工具 + 凭据）＋ Client 半（Settings → Servers 设置页） |
-| 包管理器/语言 | TypeScript / Node ≥ 24 |
+| 定位 | DeepSeek Harness 插件：**服务器管理 + 登录/会话 + 文件传输**。不实现终端 UI、不做调度、不包装 Linux 基础命令 |
+| 契约基线 | DSH `>= 0.2.1-rc.2 < 0.3.0` |
+| 形态 | 一个 bundle：Host 半（连接/会话/传输/工具）＋ Client 半（Settings → 服务器 设置页） |
+| 状态 | 需求草案，等待实施 |
 
-## 1. 目标与非目标
+---
 
-**目标**：让 DSH 的 agent 能像操作本地文件一样操作远端机器——连接测试、能力探测、执行命令、列目录、上传下载；服务器与凭据集中管理。
+## 1. 核心原则
 
-**非目标**（明确排除）：Web 工作台、窗口承载、carrier、项目内核、会话存储、跨 harness 协同、作业调度抽象（调度交给 agent 用 `run` 自行提交）。
+1. **一条命令一个执行通道，不做命令包装**：`ls`、`mkdir`、`rm`、`cat` 这类 Linux 命令是 agent 的常识，插件不再提供对应工具；登录后由 agent 自己在 shell 里执行。
+2. **连接与会话分离**：连接是传输层（可复用、可断线重连）；会话是远端 shell 进程（保持 `cd`/环境变量，需显式打开关闭）。
+3. **长连接是默认，不是可选**：同一服务器复用一条已认证连接；显式提供登录/登出/状态工具。
+4. **不确定即停**：断线中断的写操作标记 `uncertain`，绝不自动重放。
+5. **尊重 HPC 约束**：登录节点会话配额、空闲踢线、登录节点不得跑长任务——插件只提供能力与提示，不替 agent 做调度决定。
 
-## 2. 架构
+## 2. 概念模型
 
-```
-DSH 进程
- └─ dsh-multiservers（Host 半，本切片）
-     ├─ Config（Schemastery）：servers[] + 超时
-     ├─ ctx.credentials：密码存 .credentials.yaml（与 provider API key 同一套）
-     ├─ Settings 服务：server_add / server_remove 写回 profile patch
-     └─ ctx.tools.register：12 个工具
-```
-
-**凭据**：密码不进配置文件，用 `ctx.credentials.set(credentialRef('MSS_<ID>_PASSWORD'))` 写入 DSH 凭据库；配置里只出现引用名。私钥认证时只记录本地 `keyPath`，不读入配置。
-
-**主机密钥**：首次 `server_test` 可 `pin=true` 记录指纹；已 pin 时指纹不符直接拒绝连接（TOFU + 拒绝漂移）。
-
-## 3. 工具面（当前 12 个）
-
-| 组 | 工具 | 说明 |
+| 概念 | 定义 | 生命周期 |
 | --- | --- | --- |
-| server | `server_list` | 列出已配置服务器与凭据/指纹状态 |
-| | `server_test` | 连接、认证、返回延迟与主机指纹；可 pin |
-| | `server_probe` | 只读能力画像：OS、Slurm/PBS 客户端、tmux/rsync/python/conda/module/docker、存储 |
-| | `server_add` | 注册服务器；密码写入凭据库；需 Settings 服务 |
-| | `server_remove` | 移除配置；默认同时清除密码凭据 |
-| exec | `run` | 经 `bash -lc` 执行，带超时与取消信号，返回 exit/stdout/stderr |
-| fs | `ls` / `stat` / `mkdir` / `rm` | SFTP 列目录与元数据；删除需绝对路径，递归需 `confirm=true` |
-| transfer | `upload` / `download` | SFTP 传单文件（大文件留在服务器上） |
+| **服务器（Server）** | 配置中的一条记录：地址、端口、用户名、凭据、固定主机指纹 | 持久（profile 配置 / 设置页） |
+| **连接（Connection）** | 一条已认证 SSH 传输通道；其上可开多个通道（shell / sftp） | 惰性建立、空闲回收、显式登出、插件卸载时关闭 |
+| **会话（Session）** | 连接上的一个远端 shell 进程；`cd`、环境变量、已加载 module 在其中保持 | 显式打开/关闭；shell 死亡或超时被重置时失效 |
 
-## 4. 已完成的验证
+一条连接可承载**多个命名会话**（每服务器默认上限 4，可配置）；会话之间 `cwd`/环境变量互相独立。
 
-| 验证 | 结果 |
-| --- | --- |
-| 工具级集成测试（`npm test`，真实主机） | **16/16 通过**：注册 12 工具、连接 3.7s、指纹匹配、Slurm/rsync 探测、login shell 执行、cwd、列目录 65 项、上传/下载往返一致、stat（44B）、删除 |
-| 真实 DSH 加载 | `dsh --profile mss --dump-config` 出现 `# == dsh-multiservers` 层；`--dump-config-schema` 读出 `hostKey/connectTimeoutMs/passwordRef` |
-| 网页端运行 | `dsh --profile mss --port 4400` 启动成功，无本插件报错，页面可达 |
-| Client 半构建下发 | 页面 HTML 引用 `dsh-multiservers/client.js`；单独 chunk 200 / 12,732 B，含 `settings.section`、`configForms`、`remote.credentials` |
+## 3. 生命周期状态机
 
-## 5. 安装与测试
-
-```bash
-# 构建
-npm run build
-
-# 装进一个 profile（推荐新建，避免污染既有 profile）
-dsh --profile mss --from-default-profile web --dump-config
-dsh plugin --profile mss add <仓库路径>/packages/dsh-multiservers
-
-# 启动网页端
-dsh --profile mss --port 4400
+```
+                    server_connect / 任意工具调用
+   未连接 ────────────────────────────────────────► 已连接
+      ▲                                                │
+      │  server_disconnect / 空闲超时 / 插件卸载        │
+      └────────────────────────────────────────────────┘
+                                                       │ 网络中断 / 服务端踢线
+                                                       ▼
+                                                   断开（下次操作时重连）
 ```
 
-## 6. 后续切片
+- **建连**：首次需要时自动建立；`server_connect` 可提前建立。
+- **保活**：keepalive 探测，默认 30s（可配置）。
+- **空闲回收**：默认 10 分钟无操作自动断开（可在设置页修改；`0` 表示不自动断开）。
+- **重连**：操作前探活失败 → 丢弃旧连接、重建一次（仅读操作自动重试；写操作见 §6）。
+- **清理**：插件卸载 / HMR 时关闭全部连接与会话。
 
-1. ~~**Client 半**~~（已完成，0.2.1 契约）：Settings 导航新增「Servers」页（`settings.section` 槽，lazy-CJS 产物，`exports['./client']` + `dsh.client`）；非敏感字段经 `configForms` 写入，密码经 `remote.credentials` 写入凭据库。待补：编辑已有服务器、连接测试按钮
-2. 凭据写入路径从「工具」扩展到「设置卡片」；密码字段使用 `role('secret')` + 凭据引用
-3. 传输增强：rsync 优先、断点续传、sha256 校验
-4. 后台长任务：`ctx.jobs.start` + `run_in_background`
-5. 打包分发：`npm pack` / 发布，桌面端接入
+## 4. 会话（多会话 · 粘性 shell）
 
-## 7. 已知限制
+**一个连接 = 一条 SSH 通道；会话 = 通道上的独立 bash 进程。** 每服务器最多 `maxSessionsPerServer` 个（默认 4），防止占满登录节点配额。
 
-- 每次工具调用新建 SSH 连接（无连接池）；延迟可接受，后续补池化
-- `rm` 递归经远端 `rm -rf -- <quoted>`，仅有 `confirm=true` 一道门
-- 设置卡片未实现，目前添加服务器需通过 `server_add` 工具
-- 传输为 SFTP，无 rsync/续传
+- `shell_open(server, name?)`：创建命名会话（默认名 `main`）；同名已存在则复用。会话独立维护 `cwd`、环境变量、已加载 module。
+- `shell_run(server, command, session?)`：写入该会话的 stdin，用**唯一哨兵**切分输出并读取退出码；同名会话内命令**串行**执行。
+  省略 `session` 时使用 `main`（不存在则自动创建）。
+- `shell_close(server, session?)`：结束指定会话；连接保留。全部会话关闭后连接仍按空闲策略回收。
+- `session_list`：列出会话（服务器、名称、创建时间、最近活动、是否存活）。
+- 会话之间互不影响：一个会话 `cd /tmp` 不影响另一个；一个会话超时重置不影响其他会话。
+- **超时策略**：单命令默认超时 120s（可配）。超时只杀该会话的 shell 并重建同名会话，返回 `timedOut + stateReset=true`；其他会话不受影响。
+- **上限**：达到 `maxSessionsPerServer` 时拒绝新建，提示先关闭闲置会话。
+- **不实现交互式终端**：需要持续交互（编辑器、top）时，由 agent 在会话里用 `tmux`；插件不承担终端 UI。
+
+## 5. 工具面 v2（14 个）
+
+| 组 | 工具 | 作用 |
+| --- | --- | --- |
+| 管理 | `server_list` | 列出服务器与凭据/指纹状态 |
+| | `server_add` | 注册服务器（密码写入 DSH 凭据库） |
+| | `server_remove` | 移除服务器（默认同时清除密码凭据） |
+| | `server_test` | 连接测试：可达性、延迟、主机指纹、pin |
+| | `server_probe` | 只读能力画像（OS、调度器客户端、rsync、tmux、存储） |
+| 连接 | `server_connect` | 显式登录（建立/复用连接） |
+| | `server_disconnect` | 显式登出（关闭连接与会话） |
+| | `server_status` | 连接状态：已连/空闲时长/会话状态/最近错误 |
+| 会话 | `shell_open` | 打开或复用粘性 shell |
+| | `shell_run` | 在粘性 shell 中执行命令（保持 cwd/env） |
+| | `shell_close` | 关闭指定会话（连接可保留） |
+| | `session_list` | 列出会话与存活/活动状态 |
+| 传输 | `upload` | 本地文件 → 服务器（SFTP，支持续传+校验，见 §5.1） |
+| | `download` | 服务器 → 本地文件（SFTP 单文件） |
+
+**移除的工具**：`run`（由 `shell_run` 取代）、`ls`、`stat`、`mkdir`、`rm`（agent 直接在 shell 里用 Linux 命令）。
+
+**保留 `upload`/`download` 的理由**：二进制文件走 shell 需要 base64/重定向，既慢又易错；SFTP 是正确通道，且可复用同一连接。
+
+### 5.1 传输策略（rsync / 续传）
+
+| 阶段 | 方案 | 说明 |
+| --- | --- | --- |
+| **基线（必须）** | SFTP 单文件 + 按偏移续传 + sha256 校验 | 跨平台（含 Windows 本机）、复用连接池、无需远端 rsync |
+| 目录同步 | SFTP 遍历 + 逐文件比较（大小/mtime；可选哈希） | 中等规模可用；海量小文件另议 |
+| 可选增强 | 两端都探测到 rsync 时，提供 `sync` 工具走目录增量 | 代价：rsync 自起 ssh 进程，**不复用连接池**，依赖系统 ssh/密钥；默认关闭 |
+| 不做 | 自研 delta 算法、Globus/GridFTP 集成 | — |
+
+**结论**：rsync 是 Unix/HPC 的主流增量同步技术，但本机 Windows 无 rsync、且它无法复用 ssh2 连接；因此 SFTP 续传是基线，rsync 作为检测到双方具备时的可选增强。
+
+## 6. 失败与重试语义
+
+| 场景 | 行为 |
+| --- | --- |
+| 连接失败 / 认证失败 | 报明确错误，不重试；提示检查凭据/网络 |
+| 主机指纹不匹配 | **拒绝连接**，要求人工确认后重新 pin |
+| 读操作时发现连接已断 | 自动重连 1 次并重试 |
+| 写操作（upload/删除类命令）中断 | 返回 `uncertain`，不自动重试；提示先核对远端状态 |
+| `shell_run` 超时 | 只杀掉该会话并重建同名会话，返回 `timedOut + stateReset=true`；其他会话无影响 |
+| shell 进程意外退出 | 标记会话失效；下次 `shell_run` 自动重建并告知状态已丢失 |
+| 空闲超时 | 静默关闭；下次操作自动重连；会话状态丢失需在返回中说明 |
+
+## 7. HPC 环境约束（设计前提）
+
+- 登录节点会话数有配额：**每服务器只保留一条连接**，避免占满。
+- 登录节点会踢空闲会话：keepalive + 空闲回收是必需项。
+- 长任务/GPU 任务应交给调度器：插件不解析 `sbatch/squeue`，但 `server_probe` 会把可用调度器告诉 agent。
+- 密码/MFA：当前仅支持密码与公钥；**键盘交互式 MFA 尚未支持**（明确列为限制）。
+
+## 8. 配置项（设置页）
+
+| 字段 | 默认 | 设置页呈现 |
+| --- | --- | --- |
+| `servers[]` | `[]` | 服务器列表（添加/编辑/移除） |
+| `idleTimeoutMs` | 600000（10 分钟） | “空闲断开时间”（分钟；0 = 不断开） |
+| `maxSessionsPerServer` | 4 | 收进“高级” |
+| `keepaliveIntervalMs` | 30000 | 收进“高级” |
+| `commandTimeoutMs` | 120000 | 收进“高级” |
+| `connectTimeoutMs` | 15000 | 收进“高级” |
+
+设置页文案保持面向使用者：不出现工具名、存储实现、字段约束等实现细节。
+
+## 9. 验收标准
+
+| # | 验收项 |
+| --- | --- |
+| A1 | 连续 5 次 `shell_run` 只发生 1 次 SSH 认证；第 2 次起单命令延迟显著低于首次建连 |
+| A2 | `cd /tmp` 后 `pwd` 返回 `/tmp`；`export X=1` 后 `echo $X` 返回 1 |
+| A3 | 断开网络/杀掉连接后，读操作自动重连成功；写操作返回 `uncertain` 而非成功 |
+| A4 | 空闲 10 分钟后连接关闭（`server_status` 显示未连接），下次操作自动重连 |
+| A5 | 超时命令导致会话重建，返回 `stateReset=true`，后续命令可继续 |
+| A6 | 主机指纹变更时拒绝连接并报明确错误 |
+| A7 | 插件卸载/重载后无残留远端 shell 进程（由 `server_status` 与远端 `ps` 交叉验证） |
+| A8 | 设置页可修改空闲时间并生效（无需重启） |
+| A9 | 两个会话分别 `cd` 到不同目录，各自 `pwd` 互不影响 |
+| A10 | 一个会话超时重置后，另一会话仍在原目录且可继续执行 |
+| A11 | 超过 `maxSessionsPerServer` 时拒绝新建并给出可操作提示 |
+
+## 10. 待定
+
+1. ~~多会话~~（已定：多会话，默认上限 4）。
+2. **目录同步的 rsync 可选增强**：等 SFTP 基线稳定后评估。
+3. **键盘交互式认证（MFA）**：暂不支持。
+4. **会话空闲回收**：当前只有连接级空闲回收；会话级是否需要独立 TTL 待观察。
+
+## 11. 版本记录
+
+- v1.0 插件化重写：12 个工具、凭据、主机指纹、设置页
+- v1.1 连接/会话模型讨论
+- v1.2 连接复用 + 粘性 shell；移除基础文件工具；空闲时间可配置
+- v1.3 多会话（命名、上限、独立状态、session_list）；传输策略分层（SFTP 续传为基线，rsync 可选）
