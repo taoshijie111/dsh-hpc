@@ -1,4 +1,4 @@
-# 需求规格 v0.8（草案）
+# 需求规格 v0.9（草案）
 
 | 项 | 内容 |
 | --- | --- |
@@ -497,3 +497,24 @@ SSH_HOST=<host> SSH_USER=<user> SSH_PASS=<password> node scripts/dev/ssh-probe.m
 **冒烟测试证明的链路**：`fork(carrier)` → IPC 下发 target → carrier 监听独立端口 → `GET /__multiservers/enter?ticket=…` 返回 303 + `HttpOnly; SameSite=Strict` cookie → 带 cookie 请求到达上游 → 无 pass 返回 401 → `revoke-passes` 后旧 pass 失效。
 
 **尚未验证（留待接入真实 harness 时）**：WebSocket upgrade 转发、真实 dsh/kimi 页面的响应头（XFO/CSP）重写、目标应用断线重连。
+
+### 16.7 S1-a / S1-b 已完成：可运行的承载纵切
+
+| 交付 | 结果 | 证据 |
+| --- | --- | --- |
+| daemon 骨架 | ✅ Fastify + 静态 UI + `/health` + `/api/status` + `/api/windows/*` | `src/main.ts`、`src/server/app.ts` |
+| `carrier-process` 移植 | ✅ 133 行，fork carrier、重启重连、target/ticket 转发 | `src/core/carrier-process.ts` |
+| harness 发现 | ✅ 解析 npm 全局 `@deepseek-ai/dsh/lib/bin.js`，读取版本 0.2.0-rc.2；**直接 spawn node，不经 shell/.cmd** | `src/core/harnesses.ts` |
+| dsh web 地址发现 | ✅ 不依赖 tmux：解析 stdout `dsh web: http://127.0.0.1:<port>/?token=…`；首次 7.3 s，热启动 4.5 s | `src/core/dsh-web.ts`、`npm run probe:harness` |
+| 私有 relay | ✅ Windows 命名管道 / POSIX UDS；仅 carrier 可达 | `src/core/relay.ts` |
+| 窗口管理 | ✅ target + 一次性 ticket + 每次载入重新签票 | `src/core/window-manager.ts` |
+| 工作台 UI | ✅ 侧边栏（Projects/Servers/Agents 占位）+ 窗口区 iframe + 日志条 | `src/web/` |
+| **端到端验证** | ✅ 匿名访问根路径 401；ticket 兑换 303；carry 后页面 **200 / 36,867 B / `<title>DeepSeek Harness</title>`**；主 JS 包 200 / 633 KB；插件包 200 / 40 KB | `curl` 记录 |
+| 进程托管验证 | ✅ daemon(32648) → carrier(27996) + dsh-web(40312)，关闭窗口即停止 dsh | `Get-CimInstance` 快照 |
+
+**过程发现（已并入 FR-10）**：
+
+- **Windows 上经 shell 启动的进程，杀父不杀孙**。早期探测脚本用 `shell: true` 启动 dsh，`kill` 后 dsh 成为孤儿；改为直接 spawn `node <bin.js>` 后，进程树归属正确、可回收。这条直接影响 FR-10.1/FR-10.3。
+- dsh 的地址行由 harness 自己打印在 stdout，属于公开启动输出，不需要解析其内部协议（符合 FR-10.5）。
+
+**尚未覆盖**：一次真实对话的流式刷新（WebSocket/SSE 路径端到端）、kimi 承载、XFO/CSP 实际值确认、codex PTY 窗口。

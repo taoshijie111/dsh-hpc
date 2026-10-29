@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multiservers</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="mark">M</span>
+          <span class="name">Multiservers</span>
+          <span class="badge">S1 demo</span>
+        </div>
+
+        <section>
+          <h2>Projects</h2>
+          <div class="empty">项目内核在 S1-d：本地目录 + 计划 + 结果</div>
+        </section>
+
+        <section>
+          <h2>Servers</h2>
+          <div class="empty">端点配置在 S1-c：IP / 端口 / 用户名 / 凭据</div>
+        </section>
+
+        <section class="grow">
+          <h2>Agents</h2>
+          <div id="agents" class="agents"></div>
+        </section>
+
+        <footer class="meta">
+          <span id="health">connecting…</span>
+        </footer>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="title">
+            <span id="window-title">未打开窗口</span>
+            <span id="window-sub" class="sub"></span>
+          </div>
+          <div class="actions">
+            <button id="reload" class="ghost" disabled>重新载入</button>
+            <button id="close" class="ghost" disabled>关闭窗口</button>
+          </div>
+        </header>
+
+        <div class="stage">
+          <div id="placeholder" class="placeholder">
+            <h3>对话界面 = harness 自己的界面</h3>
+            <p>
+              本工具不重写会话。左侧选择一个 agent，这里会承载它自己的 Web UI（反向代理 + 一次性 ticket），
+              或终端形态的原生 TUI。
+            </p>
+            <button id="open-dsh" class="primary">打开 DeepSeek Harness</button>
+          </div>
+          <div id="loading" class="loading" hidden>
+            <div class="spinner"></div>
+            <p>正在启动 harness 并建立承载通道…</p>
+            <p class="hint">首次启动 dsh web 约 7 秒</p>
+          </div>
+          <iframe id="frame" title="harness" hidden></iframe>
+        </div>
+
+        <footer class="logbar">
+          <pre id="log"></pre>
+        </footer>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

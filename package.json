@@ -11,14 +11,20 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build:protocol && npm run build:carrier",
+    "build": "npm run build:protocol && npm run build:carrier && npm run build:core",
     "build:protocol": "tsc -p packages/carrier-protocol/tsconfig.json",
     "build:carrier": "tsc -p packages/web-carrier/tsconfig.json",
-    "typecheck": "tsc -p packages/carrier-protocol/tsconfig.json --noEmit && tsc -p packages/web-carrier/tsconfig.json --noEmit",
+    "build:core": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p packages/carrier-protocol/tsconfig.json --noEmit && tsc -p packages/web-carrier/tsconfig.json --noEmit && tsc -p tsconfig.json --noEmit",
     "test:carrier": "node scripts/dev/carrier-smoke.mjs",
+    "probe:harness": "node scripts/dev/harness-web-probe.mjs",
     "probe:ssh": "node scripts/dev/ssh-probe.mjs"
   },
   "dependencies": {
+    "@fastify/static": "^10.1.8",
+    "fastify": "^5.12.7",
     "ssh2": "^1.17.0",
     "zod": "^4.6.7"
   },
