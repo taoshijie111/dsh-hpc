@@ -20,70 +20,110 @@ window.__ModuleLoader__.load({
     const NS = "multiservers";
     const refFor = (id) => `MSS_${String(id).toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_PASSWORD`;
 
+    const line = "1px solid color-mix(in srgb, currentColor 13%, transparent)";
+    const muted = "color-mix(in srgb, currentColor 62%, transparent)";
+
     const css = {
-      root: { padding: "4px 2px 28px", maxWidth: 680 },
-      head: { display: "flex", alignItems: "baseline", gap: 12, marginBottom: 2 },
+      root: { padding: "2px 2px 32px", maxWidth: 760, fontSize: 13 },
+      head: { display: "flex", alignItems: "center", gap: 10, marginBottom: 2 },
       title: { fontSize: 15, fontWeight: 600, margin: 0 },
       grow: { flex: 1 },
-      lead: { fontSize: 12.5, opacity: 0.65, margin: "0 0 18px" },
-      row: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "11px 12px",
-        borderRadius: 8,
-        border: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
-        marginBottom: 8,
+      lead: { fontSize: 12.5, color: muted, margin: "2px 0 16px" },
+      spacer: { flex: 1 },
+      card: {
+        border: line,
+        borderRadius: 10,
+        padding: "14px 16px",
+        marginBottom: 14,
+        background: "color-mix(in srgb, currentColor 2.5%, transparent)",
       },
-      rowMain: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 },
+      cardHead: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 },
+      cardTitle: { fontSize: 13.5, fontWeight: 600 },
+      cardHint: { fontSize: 12, color: muted, margin: "4px 0 12px" },
+      serverRow: { borderTop: line, padding: "12px 0" },
+      serverHead: { display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap" },
       name: { fontSize: 13, fontWeight: 600 },
-      sub: { fontSize: 12, opacity: 0.6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-      warn: { fontSize: 12, color: "#d97706" },
-      link: {
-        border: "none",
-        background: "transparent",
-        color: "inherit",
-        opacity: 0.65,
-        font: "inherit",
-        fontSize: 12,
-        cursor: "pointer",
-        padding: "2px 4px",
+      sub: { fontSize: 12, color: muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+      mono: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 11.5, color: muted },
+      badge: {
+        fontSize: 10.5,
+        padding: "1px 7px",
+        borderRadius: 999,
+        border: line,
+        color: muted,
+        whiteSpace: "nowrap",
       },
-      linkDanger: { color: "#dc2626", opacity: 0.9 },
-      form: {
-        border: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
-        borderRadius: 8,
-        padding: "14px 14px 12px",
-        marginTop: 4,
-      },
-      grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
-      field: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12 },
-      label: { opacity: 0.65 },
+      dotOnline: { width: 7, height: 7, borderRadius: 999, background: "#16a34a" },
+      dotOffline: { width: 7, height: 7, borderRadius: 999, background: "color-mix(in srgb, currentColor 30%, transparent)" },
+      grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 },
+      field: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, minWidth: 0 },
+      label: { color: muted },
       input: {
-        padding: "6px 8px",
-        borderRadius: 6,
-        border: "1px solid color-mix(in srgb, currentColor 22%, transparent)",
+        boxSizing: "border-box",
+        width: "100%",
+        minWidth: 0,
+        padding: "7px 9px",
+        borderRadius: 7,
+        border: "1px solid color-mix(in srgb, currentColor 20%, transparent)",
         background: "transparent",
         color: "inherit",
         font: "inherit",
-        width: "100%",
       },
-      advanced: { marginTop: 10, fontSize: 12, opacity: 0.75 },
-      actions: { display: "flex", gap: 8, alignItems: "center", marginTop: 14 },
+      wide: { gridColumn: "1 / -1" },
+      advanced: { marginTop: 12, fontSize: 12, color: muted },
+      actions: { display: "flex", gap: 8, alignItems: "center", marginTop: 14, flexWrap: "wrap" },
       button: {
-        padding: "5px 14px",
-        borderRadius: 6,
-        border: "1px solid color-mix(in srgb, currentColor 22%, transparent)",
+        padding: "5px 13px",
+        borderRadius: 7,
+        border: "1px solid color-mix(in srgb, currentColor 20%, transparent)",
         background: "transparent",
         color: "inherit",
         font: "inherit",
         fontSize: 12.5,
         cursor: "pointer",
+        whiteSpace: "nowrap",
       },
       primary: { background: "#3b82f6", borderColor: "#3b82f6", color: "#fff" },
-      status: { fontSize: 12, opacity: 0.75, marginTop: 10, minHeight: 16 },
-      empty: { fontSize: 12.5, opacity: 0.6, padding: "6px 2px 16px" },
+      link: { border: "none", background: "transparent", color: "inherit", opacity: 0.7, font: "inherit", fontSize: 12, cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap" },
+      linkDanger: { color: "#dc2626", opacity: 0.9 },
+      warn: { fontSize: 12, color: "#d97706" },
+      note: { fontSize: 12, color: muted },
+      empty: { fontSize: 12.5, color: muted, padding: "6px 2px 16px" },
+      statsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 12 },
+      stat: { minWidth: 0 },
+      statHead: { display: "flex", alignItems: "baseline", gap: 6, marginBottom: 5 },
+      statLabel: { fontSize: 12, fontWeight: 600 },
+      statValue: { fontSize: 12, color: muted, marginLeft: "auto", whiteSpace: "nowrap" },
+      bar: {
+        height: 8,
+        borderRadius: 999,
+        background: "color-mix(in srgb, currentColor 12%, transparent)",
+        overflow: "hidden",
+      },
+      barFill: { height: "100%", borderRadius: 999, transition: "width .25s ease" },
+      gpuCard: { border: line, borderRadius: 8, padding: "10px 12px", minWidth: 0 },
+      gpuHead: { display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8, minWidth: 0 },
+      gpuName: { fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+      chip: {
+        fontSize: 11,
+        padding: "2px 8px",
+        borderRadius: 999,
+        border: line,
+        color: muted,
+        whiteSpace: "nowrap",
+      },
+      footer: { marginTop: 10, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", fontSize: 11.5, color: muted },
+      loading: { fontSize: 12, color: muted, padding: "6px 0" },
     };
+
+    const colorFor = (percent) => {
+      if (percent === null || percent === undefined) return "color-mix(in srgb, currentColor 30%, transparent)";
+      if (percent >= 85) return "#dc2626";
+      if (percent >= 60) return "#d97706";
+      return "#16a34a";
+    };
+    const clamp = (value) => Math.max(0, Math.min(100, Number(value) || 0));
+    const gb = (mb) => (Number.isFinite(mb) ? `${(mb / 1024).toFixed(mb >= 10 * 1024 ? 0 : 1)} GB` : "—");
 
     const emptyDraft = () => ({
       name: "",
@@ -100,35 +140,116 @@ window.__ModuleLoader__.load({
     function Field(props) {
       return h(
         "label",
-        { style: css.field },
+        { style: props.wide ? { ...css.field, ...css.wide } : css.field },
         h("span", { style: css.label }, props.label),
         props.children,
       );
     }
 
+    function Bar(props) {
+      const percent = clamp(props.percent);
+      return h(
+        "div",
+        { style: css.bar },
+        h("div", { style: { ...css.barFill, width: `${percent}%`, background: colorFor(percent) } }),
+      );
+    }
 
+    function Stat(props) {
+      return h(
+        "div",
+        { style: css.stat },
+        h(
+          "div",
+          { style: css.statHead },
+          h("span", { style: css.statLabel }, props.label),
+          h("span", { style: css.statValue }, props.value),
+        ),
+        h(Bar, { percent: props.percent }),
+      );
+    }
 
-    function formatUsage(sample) {
-      const parts = [];
-      if (sample.load) parts.push(`负载  ${sample.load}`);
-      if (sample.memory) parts.push(`内存
-${sample.memory}`);
-      if (sample.cpu) parts.push(`CPU
-${sample.cpu}`);
-      parts.push(`GPU
-${sample.gpu && sample.gpu !== "none" ? sample.gpu : "未检测到 GPU"}`);
-      if (sample.disk) parts.push(`磁盘
-${sample.disk}`);
-      if (sample.jobs) parts.push(`我的作业
-${sample.jobs}`);
-      return parts.join(String.fromCharCode(10, 10));
+    function UsageGauges(props) {
+      const sample = props.sample;
+      const cpu = sample.cpu || {};
+      const memory = sample.memory || null;
+      const gpus = Array.isArray(sample.gpus) ? sample.gpus : [];
+      const disks = Array.isArray(sample.disks) ? sample.disks : [];
+      const load = Array.isArray(cpu.load) ? cpu.load.map((value) => value.toFixed(2)).join(" / ") : "—";
+      return h(
+        "div",
+        null,
+        h(
+          "div",
+          { style: css.statsGrid },
+          h(Stat, {
+            label: "CPU",
+            value: `${cpu.usagePercent === null || cpu.usagePercent === undefined ? "—" : `${cpu.usagePercent}%`} · ${cpu.cores || "?"} 核 · load ${load}`,
+            percent: cpu.usagePercent,
+          }),
+          memory
+            ? h(Stat, {
+                label: "内存",
+                value: `${memory.percent}% · ${gb(memory.usedMb)} / ${gb(memory.totalMb)}`,
+                percent: memory.percent,
+              })
+            : h("div", { style: css.note }, "内存信息不可用"),
+        ),
+        gpus.length === 0
+          ? h("div", { style: { ...css.note, marginTop: 10 } }, "未检测到 GPU（nvidia-smi 不可用或无 GPU）")
+          : h(
+              "div",
+              { style: { ...css.statsGrid, gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))" } },
+              gpus.map((gpu) =>
+                h(
+                  "div",
+                  { key: gpu.index, style: css.gpuCard },
+                  h(
+                    "div",
+                    { style: css.gpuHead },
+                    h("span", { style: css.gpuName }, gpu.name),
+                    h("span", { style: css.chip }, `GPU ${gpu.index}`),
+                  ),
+                  h(Stat, { label: "利用率", value: `${gpu.utilPercent}%`, percent: gpu.utilPercent }),
+                  h("div", { style: { height: 6 } }),
+                  h(Stat, {
+                    label: "显存",
+                    value: `${gb(gpu.memUsedMb)} / ${gb(gpu.memTotalMb)}`,
+                    percent: gpu.memTotalMb > 0 ? (gpu.memUsedMb / gpu.memTotalMb) * 100 : 0,
+                  }),
+                ),
+              ),
+            ),
+        disks.length > 0
+          ? h(
+              "div",
+              { style: { ...css.statsGrid, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" } },
+              disks.slice(0, 4).map((disk) =>
+                h(Stat, {
+                  key: disk.mount,
+                  label: disk.mount,
+                  value: `${disk.percent}% · ${disk.used} / ${disk.size}`,
+                  percent: disk.percent,
+                }),
+              ),
+            )
+          : null,
+        h(
+          "div",
+          { style: css.footer },
+          h("span", null, `采样时间 ${new Date(sample.sampledAt).toLocaleTimeString()}`),
+          h("span", null, `用时 ${sample.elapsedMs} ms`),
+          h("span", null, "已自动断开"),
+          h("span", { style: css.chip }, `排队作业 ${sample.jobs ?? 0}`),
+        ),
+      );
     }
 
     function StatusPanel() {
       const [data, setData] = React.useState(null);
       const [error, setError] = React.useState("");
-      const [usage, setUsage] = React.useState({});
       const [busy, setBusy] = React.useState(false);
+      const [samples, setSamples] = React.useState({});
 
       const load = React.useCallback(async () => {
         setBusy(true);
@@ -150,60 +271,63 @@ ${sample.jobs}`);
       }, [load]);
 
       const sample = async (id) => {
-        setUsage((current) => ({ ...current, [id]: { loading: true } }));
+        setSamples((current) => ({ ...current, [id]: { loading: true } }));
         try {
           const response = await fetch(`/api/multiservers/usage?server=${encodeURIComponent(id)}`, {
             headers: { "x-multiservers-request": "1" },
           });
           const body = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-          setUsage((current) => ({ ...current, [id]: { text: formatUsage(body) } }));
+          setSamples((current) => ({ ...current, [id]: { sample: body } }));
         } catch (failure) {
-          setUsage((current) => ({ ...current, [id]: { error: (failure && failure.message) || String(failure) } }));
+          setSamples((current) => ({ ...current, [id]: { error: (failure && failure.message) || String(failure) } }));
         }
       };
 
       const servers = (data && data.servers) || [];
       return h(
         "div",
-        { style: { ...css.form, marginTop: 0, marginBottom: 14 } },
+        { style: css.card },
         h(
           "div",
-          { style: { display: "flex", alignItems: "baseline", gap: 10 } },
-          h("span", { style: css.name }, "状态"),
-          h("span", { style: css.grow }),
-          h("button", { type: "button", style: css.button, disabled: busy, onClick: load }, busy ? "刷新中…" : "刷新"),
+          { style: css.cardHead },
+          h("span", { style: css.cardTitle }, "状态"),
+          h("span", { style: css.spacer }),
+          h("button", { type: "button", style: css.button, disabled: busy, onClick: load }, busy ? "刷新中…" : "刷新状态"),
         ),
-        h("p", { style: { ...css.lead, margin: "6px 0 10px" } }, "查看服务器是否在线，以及 CPU / GPU / 磁盘占用。"),
+        h("p", { style: css.cardHint }, "点「资源占用」会临时连接一次，采集 CPU / 内存 / GPU / 磁盘后自动断开。"),
         error ? h("div", { style: css.warn }, `读取失败：${error}`) : null,
         servers.length === 0
           ? h("div", { style: css.empty }, "还没有服务器。")
-          : servers.map((server) =>
-              h(
+          : servers.map((server) => {
+              const state = samples[server.id] || {};
+              return h(
                 "div",
-                { key: server.id, style: { borderTop: "1px solid color-mix(in srgb, currentColor 12%, transparent)", padding: "10px 0" } },
+                { key: server.id, style: css.serverRow },
                 h(
                   "div",
-                  { style: css.row },
+                  { style: css.serverHead },
+                  h("span", { style: server.connected ? css.dotOnline : css.dotOffline }),
                   h("span", { style: css.name }, server.label || server.id),
                   h("span", { style: css.sub }, `${server.username}@${server.host}:${server.port}`),
-                  h("span", { style: css.meta }, server.connected ? "在线" : "未连接"),
+                  h("span", { style: css.badge }, server.kind === "slurm" ? "Slurm" : server.kind === "bare" ? "裸金属" : "自动检测"),
+                  server.hostKeyPinned ? h("span", { style: css.badge }, "指纹已固定") : null,
                   h("span", { style: css.spacer }),
-                  h("button", { type: "button", style: css.link, onClick: () => sample(server.id) }, "资源占用"),
+                  h(
+                    "button",
+                    { type: "button", style: css.button, disabled: state.loading === true, onClick: () => sample(server.id) },
+                    state.loading ? "采集中…" : "资源占用",
+                  ),
                 ),
-                h("div", { style: { ...css.sub, marginTop: 2 } },
-                  `会话 ${server.sessions.length ? server.sessions.join("、") : "无"} · 转发 ${server.forwards.length || 0}`),
-                usage[server.id] && usage[server.id].loading
-                  ? h("div", { style: css.sub }, "采样中…")
-                  : null,
-                usage[server.id] && usage[server.id].error
-                  ? h("div", { style: css.warn }, usage[server.id].error)
-                  : null,
-                usage[server.id] && usage[server.id].text
-                  ? h("pre", { style: { ...css.input, marginTop: 8, maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" } }, usage[server.id].text)
-                  : null,
-              ),
-            ),
+                h(
+                  "div",
+                  { style: { ...css.sub, marginTop: 3 } },
+                  `${server.connected ? "在线" : "未连接"} · 会话 ${server.sessions.length ? server.sessions.join("、") : "无"} · 转发 ${server.forwards.length || 0}`,
+                ),
+                state.error ? h("div", { style: { ...css.warn, marginTop: 8 } }, `采样失败：${state.error}`) : null,
+                state.sample ? h("div", { style: { marginTop: 12 } }, h(UsageGauges, { sample: state.sample })) : null,
+              );
+            }),
       );
     }
 
@@ -241,42 +365,52 @@ ${sample.jobs}`);
           let ok = true;
           for (const [field, amount] of ops) ok = (await form.set(field, amount)) && ok;
           setNote(ok ? "已保存" : "保存失败");
-        } catch (error) {
-          setNote(`保存失败：${(error && error.message) || error}`);
+        } catch (failure) {
+          setNote(`保存失败：${(failure && failure.message) || failure}`);
         } finally {
           setBusy(false);
         }
       };
       return h(
         "details",
-        { style: { ...css.form, marginTop: 0, marginBottom: 14 } },
+        { style: css.card },
         h(
           "summary",
-          { style: { cursor: "pointer", fontSize: 12.5, opacity: 0.75 } },
-          `连接设置（空闲 ${draft.idleMinutes} 分钟自动断开）`,
+          { style: { cursor: "pointer", ...css.cardHead } },
+          h("span", { style: css.cardTitle }, "连接设置"),
+          h("span", { style: css.sub }, `空闲 ${draft.idleMinutes} 分钟断开 · 会话空闲 ${draft.sessionIdleMinutes} 分钟回收`),
         ),
         h(
           "div",
-          { style: { ...css.grid, marginTop: 12 } },
-          h(Field, { label: "空闲断开（分钟，0 = 不断开）" },
-            h("input", { style: css.input, inputMode: "numeric", value: draft.idleMinutes, onChange: (e) => update({ idleMinutes: e.target.value }) })),
-          h(Field, { label: "每服务器最大会话数" },
-            h("input", { style: css.input, inputMode: "numeric", value: draft.maxSessions, onChange: (e) => update({ maxSessions: e.target.value }) })),
-          h(Field, { label: "保活间隔（秒）" },
-            h("input", { style: css.input, inputMode: "numeric", value: draft.keepaliveSeconds, onChange: (e) => update({ keepaliveSeconds: e.target.value }) })),
-          h(Field, { label: "命令超时（秒）" },
-            h("input", { style: css.input, inputMode: "numeric", value: draft.commandSeconds, onChange: (e) => update({ commandSeconds: e.target.value }) })),
-          h(Field, { label: "连接超时（秒）" },
-            h("input", { style: css.input, inputMode: "numeric", value: draft.connectSeconds, onChange: (e) => update({ connectSeconds: e.target.value }) })),
-          h(Field, { label: "会话空闲断开（分钟，0 = 不断开）" },
-            h("input", { style: css.input, inputMode: "numeric", value: draft.sessionIdleMinutes, onChange: (e) => update({ sessionIdleMinutes: e.target.value }) })),
-        ),
-        h(
-          "div",
-          { style: css.actions },
-          h("button", { type: "button", style: { ...css.button, ...css.primary }, disabled: !writable || busy, onClick: save },
-            busy ? "保存中…" : "保存连接设置"),
-          note ? h("span", { style: css.status }, note) : null,
+          { style: { marginTop: 14 } },
+          h("div", { style: { ...css.cardTitle, marginBottom: 8 } }, "空闲与回收"),
+          h(
+            "div",
+            { style: css.grid },
+            h(Field, { label: "连接空闲断开（分钟，0 = 不断开）" },
+              h("input", { style: css.input, inputMode: "numeric", value: draft.idleMinutes, onChange: (event) => update({ idleMinutes: event.target.value }) })),
+            h(Field, { label: "会话空闲回收（分钟，0 = 不回收）" },
+              h("input", { style: css.input, inputMode: "numeric", value: draft.sessionIdleMinutes, onChange: (event) => update({ sessionIdleMinutes: event.target.value }) })),
+            h(Field, { label: "每服务器最大会话数" },
+              h("input", { style: css.input, inputMode: "numeric", value: draft.maxSessions, onChange: (event) => update({ maxSessions: event.target.value }) })),
+          ),
+          h("div", { style: { ...css.cardTitle, margin: "14px 0 8px" } }, "超时与保活"),
+          h(
+            "div",
+            { style: css.grid },
+            h(Field, { label: "保活间隔（秒）" },
+              h("input", { style: css.input, inputMode: "numeric", value: draft.keepaliveSeconds, onChange: (event) => update({ keepaliveSeconds: event.target.value }) })),
+            h(Field, { label: "命令超时（秒）" },
+              h("input", { style: css.input, inputMode: "numeric", value: draft.commandSeconds, onChange: (event) => update({ commandSeconds: event.target.value }) })),
+            h(Field, { label: "连接超时（秒）" },
+              h("input", { style: css.input, inputMode: "numeric", value: draft.connectSeconds, onChange: (event) => update({ connectSeconds: event.target.value }) })),
+          ),
+          h(
+            "div",
+            { style: css.actions },
+            h("button", { type: "button", style: { ...css.button, ...css.primary }, disabled: !writable || busy, onClick: save }, busy ? "保存中…" : "保存设置"),
+            note ? h("span", { style: css.note }, note) : null,
+          ),
         ),
       );
     }
@@ -292,7 +426,7 @@ ${sample.jobs}`);
       const servers = Array.isArray(value.servers) ? value.servers : [];
       const writable = snapshot.status === "ready" && snapshot.writable;
 
-      const [editing, setEditing] = React.useState(null); // null | 'new' | server id
+      const [editing, setEditing] = React.useState(null);
       const [draft, setDraft] = React.useState(emptyDraft);
       const [status, setStatus] = React.useState("");
       const [busy, setBusy] = React.useState(false);
@@ -332,8 +466,8 @@ ${sample.jobs}`);
           const accepted = await form.set("servers", next);
           if (!accepted) setStatus("保存失败，请稍后重试");
           return accepted;
-        } catch (error) {
-          setStatus(`保存失败：${(error && error.message) || error}`);
+        } catch (failure) {
+          setStatus(`保存失败：${(failure && failure.message) || failure}`);
           return false;
         } finally {
           setBusy(false);
@@ -393,6 +527,10 @@ ${sample.jobs}`);
         };
         if (draft.label.trim()) entry.label = draft.label.trim();
         if (draft.hostKey.trim()) entry.hostKey = draft.hostKey.trim();
+        if (previous && previous.kind) entry.kind = previous.kind;
+        if (previous && previous.resolvedKind) entry.resolvedKind = previous.resolvedKind;
+        if (previous && previous.schedulerDefaults) entry.schedulerDefaults = previous.schedulerDefaults;
+        if (previous && previous.jobRoot) entry.jobRoot = previous.jobRoot;
 
         if (draft.auth === "key") {
           if (!draft.keyPath.trim()) return setStatus("请填写私钥路径");
@@ -404,8 +542,8 @@ ${sample.jobs}`);
           if (draft.password) {
             try {
               await remote.credentials.set(entry.passwordRef, draft.password);
-            } catch (error) {
-              return setStatus(`密码保存失败：${(error && error.message) || error}`);
+            } catch (failure) {
+              return setStatus(`密码保存失败：${(failure && failure.message) || failure}`);
             }
           }
         }
@@ -439,10 +577,10 @@ ${sample.jobs}`);
           server.auth !== "key" && configured[server.passwordRef || refFor(server.id)] === false;
         return h(
           "div",
-          { style: css.row, key: server.id },
+          { style: { display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", border: line, borderRadius: 8, marginBottom: 8 } },
           h(
             "div",
-            { style: css.rowMain },
+            { style: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 } },
             h("span", { style: css.name }, server.label || server.id),
             h("span", { style: css.sub }, `${server.username}@${server.host}:${server.port || 22}`),
             missingPassword ? h("span", { style: css.warn }, "尚未保存密码") : null,
@@ -460,8 +598,8 @@ ${sample.jobs}`);
         ? null
         : h(
             "div",
-            { style: css.form, key: "form" },
-            h("div", { style: { ...css.name, marginBottom: 10 } }, formTitle),
+            { style: css.card, key: "form" },
+            h("div", { style: { ...css.cardTitle, marginBottom: 12 } }, formTitle),
             h(
               "div",
               { style: css.grid },
@@ -471,7 +609,12 @@ ${sample.jobs}`);
                   disabled: editing !== "new",
                   onChange: (event) => update({ name: event.target.value }),
                 })),
-              h(Field, { label: "地址" },
+              h(Field, { label: "显示名称（可选）" },
+                h("input", {
+                  style: css.input, value: draft.label, placeholder: "例如 GPU 集群",
+                  onChange: (event) => update({ label: event.target.value }),
+                })),
+              h(Field, { label: "地址", wide: true },
                 h("input", {
                   style: css.input, value: draft.host, placeholder: "主机名或 IP",
                   onChange: (event) => update({ host: event.target.value }),
@@ -492,32 +635,29 @@ ${sample.jobs}`);
                   onChange: (event) => update({ auth: event.target.value }),
                 }, h("option", { value: "password" }, "密码"), h("option", { value: "key" }, "私钥"))),
               draft.auth === "key"
-                ? h(Field, { label: "私钥路径" },
+                ? h(Field, { label: "私钥路径", wide: true },
                     h("input", {
                       style: css.input, value: draft.keyPath, placeholder: "本机私钥文件路径",
                       onChange: (event) => update({ keyPath: event.target.value }),
                     }))
-                : h(Field, { label: "密码" },
+                : h(Field, { label: "密码", wide: true },
                     h("input", {
                       style: css.input, type: "password", value: draft.password,
-                      placeholder: editing === "new" ? "登录密码" : "留空则不修改",
+                      placeholder: editing === "new" ? "登录密码（保存在安全凭据库）" : "留空则不修改",
                       onChange: (event) => update({ password: event.target.value }),
                     })),
-              h(Field, { label: "显示名称（可选）" },
-                h("input", {
-                  style: css.input, value: draft.label, placeholder: "例如 GPU 集群",
-                  onChange: (event) => update({ label: event.target.value }),
-                })),
             ),
             h(
               "details",
               { style: css.advanced },
               h("summary", { style: { cursor: "pointer" } }, "高级"),
-              h(Field, { label: "主机指纹（可选）" },
-                h("input", {
-                  style: css.input, value: draft.hostKey, placeholder: "首次连接后可固定",
-                  onChange: (event) => update({ hostKey: event.target.value }),
-                })),
+              h("div", { style: { ...css.grid, marginTop: 10 } },
+                h(Field, { label: "主机指纹（可选）", wide: true },
+                  h("input", {
+                    style: css.input, value: draft.hostKey, placeholder: "首次连接后固定，例如 SHA256:...",
+                    onChange: (event) => update({ hostKey: event.target.value }),
+                  })),
+              ),
             ),
             h(
               "div",
@@ -525,7 +665,7 @@ ${sample.jobs}`);
               h("button", { type: "button", style: { ...css.button, ...css.primary }, disabled: !writable || busy, onClick: save },
                 busy ? "保存中…" : "保存"),
               h("button", { type: "button", style: css.button, onClick: cancel }, "取消"),
-              !writable ? h("span", { style: css.status }, "当前设置为只读") : null,
+              !writable ? h("span", { style: css.note }, "当前设置为只读") : null,
             ),
           );
 
@@ -539,13 +679,13 @@ ${sample.jobs}`);
           h("span", { style: css.grow }),
           h("button", { type: "button", style: css.button, disabled: !writable || formOpen, onClick: startAdd }, "添加"),
         ),
-        h("p", { style: css.lead }, "管理 agent 可操作的远端机器。"),
+        h("p", { style: css.lead }, "管理 agent 可操作的远端服务器；资源占用按需临时连接采集。"),
         h(StatusPanel, null),
         h(ConnectionSettings, { form, snapshot }),
         servers.length === 0 && !formOpen ? h("div", { style: css.empty }, "还没有服务器。") : null,
         formPanel,
         rows,
-        status ? h("div", { style: css.status }, status) : null,
+        status ? h("div", { style: { ...css.note, marginTop: 8 } }, status) : null,
       );
     }
 
