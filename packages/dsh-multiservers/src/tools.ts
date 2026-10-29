@@ -6,6 +6,7 @@ import type { ConnectionPool } from "./core/pool.js";
 import { downloadWithResume, uploadWithResume } from "./core/transfer.js";
 import type { SessionRegistry } from "./core/session.js";
 import { execRemote, passwordRefFor } from "./core/ssh.js";
+import { cancelJob, loadJob, queryJobs, readJobLogs, submitJob } from "./core/jobs.js";
 import { MultiserversError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
 
 const text = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }];
@@ -112,6 +113,15 @@ export function registerTools(
           description: "Credential reference holding the key passphrase (key auth).",
         },
         hostKey: { type: "string", description: "Pinned host key fingerprint, e.g. SHA256:..." },
+        kind: { type: "string", enum: ["auto", "bare", "slurm"], description: "Scheduling backend; defaults to auto detection." },
+        partition: { type: "string", description: "Default Slurm partition for jobs." },
+        account: { type: "string", description: "Default Slurm account." },
+        qos: { type: "string", description: "Default Slurm QOS." },
+        time: { type: "string", description: "Default Slurm time limit." },
+        cpusPerTask: { type: "number", description: "Default CPUs per job." },
+        memory: { type: "string", description: "Default memory per job." },
+        gpus: { type: "number", description: "Default GPUs per job." },
+        jobRoot: { type: "string", description: "Remote directory for job scripts and logs." },
       },
       output: objectOutput,
       async execute(args) {
@@ -122,6 +132,16 @@ export function registerTools(
         const auth = (args.auth ?? "password") as "password" | "key";
         if (auth === "key" && !args.keyPath) throw new MultiserversError("key auth requires keyPath");
         const existing = config.servers.find((entry) => entry.id === args.id);
+        const defaults = {
+          ...(existing?.schedulerDefaults ?? {}),
+          ...(args.partition ? { partition: args.partition } : {}),
+          ...(args.account ? { account: args.account } : {}),
+          ...(args.qos ? { qos: args.qos } : {}),
+          ...(args.time ? { time: args.time } : {}),
+          ...(args.cpusPerTask ? { cpusPerTask: args.cpusPerTask } : {}),
+          ...(args.memory ? { memory: args.memory } : {}),
+          ...(args.gpus ? { gpus: args.gpus } : {}),
+        };
         const server: ServerSpec = {
           ...(existing ?? {}),
           id: args.id,
@@ -133,6 +153,9 @@ export function registerTools(
           ...(args.keyPath ? { keyPath: args.keyPath } : {}),
           ...(args.keyPassphraseRef ? { keyPassphraseRef: args.keyPassphraseRef } : {}),
           ...(args.hostKey ? { hostKey: args.hostKey } : {}),
+          ...(args.kind ? { kind: args.kind as "auto" | "bare" | "slurm" } : {}),
+          ...(Object.keys(defaults).length ? { schedulerDefaults: defaults } : {}),
+          ...(args.jobRoot ? { jobRoot: args.jobRoot } : {}),
         };
         const next = existing
           ? config.servers.map((entry) => (entry.id === args.id ? server : entry))
@@ -393,6 +416,135 @@ export function registerTools(
         });
         pool.addForward(state, { localPort, remoteHost, remotePort: args.remotePort, server: localServer });
         return { server: server.id, localPort, remoteHost, remotePort: args.remotePort, closed: false };
+      },
+    }),
+  );
+
+
+  register(
+    defineTool({
+      name: "job_submit",
+      description:
+        "Submit a long-running job on a server and return immediately. The server's type decides the route: a Slurm cluster gets sbatch (queued, survives disconnect), a bare-metal host gets a detached setsid/nohup process. Returns jobId; poll it with job_status, read output with job_logs, stop it with job_cancel. Scripts are staged under the server's jobRoot.",
+      parameters: {
+        server: { type: "string", required: true, description: "Server id from server_list." },
+        command: { type: "string", description: "Shell command to run as the job body." },
+        script: { type: "string", description: "Full bash script; takes precedence over command." },
+        workdir: { type: "string", required: true, description: "Absolute working directory on the server." },
+        name: { type: "string", description: "Short job name for schedulers and logs." },
+        partition: { type: "string", description: "Slurm partition (overrides the server default)." },
+        account: { type: "string", description: "Slurm account." },
+        qos: { type: "string", description: "Slurm QOS." },
+        time: { type: "string", description: "Slurm time limit, e.g. 4:00:00." },
+        cpusPerTask: { type: "number", description: "CPUs for the job." },
+        memory: { type: "string", description: "Memory request, e.g. 32G." },
+        gpus: { type: "number", description: "GPUs requested (Slurm --gres)." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const config = getConfig();
+        const server = findServer(config, args.server);
+        const resources = {
+          ...(args.partition ? { partition: args.partition } : {}),
+          ...(args.account ? { account: args.account } : {}),
+          ...(args.qos ? { qos: args.qos } : {}),
+          ...(args.time ? { time: args.time } : {}),
+          ...(args.cpusPerTask ? { cpusPerTask: args.cpusPerTask } : {}),
+          ...(args.memory ? { memory: args.memory } : {}),
+          ...(args.gpus ? { gpus: args.gpus } : {}),
+        };
+        const record = await submitJob(
+          ctx,
+          pool,
+          server,
+          { ...(args.command ? { command: args.command } : {}), ...(args.script ? { script: args.script } : {}), workdir: args.workdir, ...(args.name ? { name: args.name } : {}), ...(Object.keys(resources).length ? { resources } : {}) },
+          async (backend) => {
+            const latest = getConfig();
+            await writeServers(
+              ctx,
+              latest.servers.map((entry) => (entry.id === server.id ? { ...entry, resolvedKind: backend } : entry)),
+            );
+          },
+        );
+        return { ...record, jobId: record.id };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "job_status",
+      description:
+        "Check job state (queued/running/completed/failed/cancelled/lost/unknown), exit code and log tail. With jobId, one job; with server only, all jobs of that server; with neither, all tracked jobs. Reads the host ledger and reconciles against the scheduler or the process.",
+      parameters: {
+        jobId: { type: "string", description: "Job id returned by job_submit." },
+        server: { type: "string", description: "Filter by server id." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const jobs = await queryJobs(ctx, pool, getConfig().servers, {
+          ...(args.server ? { serverId: args.server } : {}),
+          ...(args.jobId ? { jobId: args.jobId } : {}),
+        });
+        return {
+          jobs: jobs.map((job) => ({
+            jobId: job.id,
+            server: job.server,
+            backend: job.backend,
+            schedulerJobId: job.schedulerJobId ?? null,
+            state: job.state,
+            exitCode: job.exitCode ?? null,
+            workdir: job.workdir,
+            outPath: job.outPath,
+            createdAt: job.createdAt,
+            lastCheckedAt: job.lastCheckedAt,
+          })),
+        };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "job_logs",
+      description:
+        "Read a job's output incrementally. Pass offset from a previous call to continue. Defaults to 64 KiB per call and reports truncated when more remains. Read stdout or stderr separately.",
+      parameters: {
+        jobId: { type: "string", required: true, description: "Job id returned by job_submit." },
+        offset: { type: "number", description: "Byte offset to start from; use nextOffset from the previous call." },
+        maxBytes: { type: "number", description: "Maximum bytes to read; defaults to 64 KiB." },
+        stream: { type: "string", enum: ["stdout", "stderr"], description: "Which stream to read; defaults to stdout." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const record = loadJob(args.jobId);
+        if (!record) throw new MultiserversError(`Unknown job "${args.jobId}"`);
+        const server = findServer(getConfig(), record.server);
+        const result = await readJobLogs(ctx, pool, server, record, {
+          ...(args.offset !== undefined ? { offset: args.offset } : {}),
+          ...(args.maxBytes !== undefined ? { maxBytes: args.maxBytes } : {}),
+          ...(args.stream ? { stream: args.stream } : {}),
+        });
+        return { jobId: record.id, server: record.server, ...result };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "job_cancel",
+      description:
+        "Cancel a running or queued job: scancel on Slurm, SIGTERM then SIGKILL on bare metal. The ledger records cancelled.",
+      parameters: {
+        jobId: { type: "string", required: true, description: "Job id returned by job_submit." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const record = loadJob(args.jobId);
+        if (!record) throw new MultiserversError(`Unknown job "${args.jobId}"`);
+        const server = findServer(getConfig(), record.server);
+        const cancelled = await cancelJob(ctx, pool, server, record);
+        return { jobId: cancelled.id, state: cancelled.state };
       },
     }),
   );

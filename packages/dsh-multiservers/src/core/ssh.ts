@@ -121,6 +121,7 @@ export function execRemote(
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let channel: { destroy?: () => void; close?: () => void } | undefined;
     const finish = (result: ExecResult) => {
       if (settled) return;
       settled = true;
@@ -132,7 +133,8 @@ export function execRemote(
       timedOut = true;
       finish({ code: null, stdout, stderr, timedOut, durationMs: Date.now() - started });
       try {
-        client.end();
+        channel?.destroy?.();
+        channel?.close?.();
       } catch {
         /* already closed */
       }
@@ -140,7 +142,8 @@ export function execRemote(
     const onAbort = () => {
       finish({ code: null, stdout, stderr, timedOut: true, durationMs: Date.now() - started });
       try {
-        client.end();
+        channel?.destroy?.();
+        channel?.close?.();
       } catch {
         /* already closed */
       }
@@ -154,6 +157,7 @@ export function execRemote(
         reject(new MultiserversError(`Remote command failed to start: ${error.message}`));
         return;
       }
+      channel = stream;
       stream.on("data", (chunk: Buffer) => {
         stdout += chunk.toString("utf8");
       });

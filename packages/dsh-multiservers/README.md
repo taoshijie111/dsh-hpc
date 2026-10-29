@@ -6,7 +6,7 @@ Exposes 12 tools to the model — server registry, connectivity/host-key checks,
 command execution, SFTP file operations and transfers. No separate UI, no daemon: the plugin runs
 inside DSH and stores passwords in DSH's own credential store (the same place provider API keys live).
 
-## Tools (10)
+## Tools (14)
 
 | Group | Tool | Purpose |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ inside DSH and stores passwords in DSH's own credential store (the same place pr
 | | `shell_close` | Close one named session |
 | Transfer | `upload` / `download` | File or directory tree; `.part` staging + sha256, resume from partial size |
 | Network | `forward` | Local TCP forward through the pooled connection (Jupyter/TensorBoard) |
+| Jobs | `job_submit` / `job_status` / `job_logs` / `job_cancel` | Long-running jobs: Slurm (`sbatch`, `squeue`/`sacct`, `scancel`) or bare metal (`setsid`+`nohup`, pid + exit-code file). Server `kind: auto` detects and caches the backend; `schedulerDefaults` supply partition/account/qos/time/cpus/mem/gpus; scripts and logs live under `jobRoot`. |
 
 Authentication: password or key, plus an optional key passphrase credential; keyboard-interactive
 (multi-factor) prompts are answered with the same stored secret. Connections are pooled; sessions

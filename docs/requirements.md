@@ -1,4 +1,4 @@
-# 产品需求 v1.6 — DSH 服务器管理插件（`dsh-multiservers`）
+# 产品需求 v1.7 — DSH 服务器管理插件（`dsh-multiservers`）
 
 | 项 | 内容 |
 | --- | --- |
@@ -181,6 +181,20 @@
 | 设置页 | 「状态」区：在线状态、会话、转发、刷新；每台服务器「资源占用」按需采样并内联渲染 |
 | 验证 | status/usage 接口实测返回正确 JSON；集成测试 19/19 |
 
+
+### 9.4 v1.7 长任务后台子系统
+
+| 项 | 实现 |
+| --- | --- |
+| 服务器类型 | `kind: auto\|bare\|slurm`（默认 auto）；首次提交探测 `sbatch+squeue` 并缓存到 `resolvedKind`，可手动覆盖 |
+| 默认资源 | `schedulerDefaults`（partition/account/qos/time/cpus/memory/gpus）+ 任务级覆盖 |
+| 账本 | `$DSH_HOME/multiservers/jobs/<id>.json`，脚本与日志在远端 `jobRoot`（默认 `~/.multiservers/jobs`） |
+| 裸金属后端 | 脚本落盘 + `setsid nohup` 启动；pid 文件 + `/proc/<pid>/stat` 启动时间防复用；退出码文件判定终态 |
+| Slurm 后端 | 生成 `#SBATCH` 脚本 + `sbatch --parsable`；`squeue` 查运行态、`sacct` 查终态，记账延迟返回 `unknown`；`scancel` 取消 |
+| 工具 | `job_submit`（立即返回 jobId）、`job_status`、`job_logs`（offset/截断）、`job_cancel`；工具总数 14 |
+| 稳定性修复 | `execRemote` 超时只销毁通道不关连接池；后台启动以 pid 文件返回，不等待通道关闭 |
+| 测试 | jobs-smoke **14/14**（裸金属 `wxj-94` + Slurm `jz`）；tools-smoke **20/20** |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。
@@ -198,3 +212,4 @@
 - v1.4 已实施：工具面收敛为 10 个；P0 四项；目录传输、会话空闲回收、密钥口令/MFA、端口转发
 - v1.5 斜杠命令实验（已移除：第三方 host 命令结果无渲染节点）
 - v1.6 设置页「状态」面板 + host 状态/采样 HTTP 接口；移除斜杠命令
+- v1.7 长任务子系统：服务器类型/默认资源、作业账本、裸金属与 Slurm 双后端、4 个 job 工具

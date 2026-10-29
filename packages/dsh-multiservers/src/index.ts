@@ -36,6 +36,20 @@ export const Config = Schema.object({
       ),
       keyPath: Schema.string().description("Absolute local private key path for key auth."),
       hostKey: Schema.string().description("Pinned host key fingerprint, e.g. SHA256:...; empty pins on first test."),
+      kind: Schema.union(["auto", "bare", "slurm"])
+        .default("auto")
+        .description("Scheduling backend: auto detects and caches, bare or slurm force one."),
+      resolvedKind: Schema.union(["bare", "slurm"]).description("Cached result of the automatic detection."),
+      schedulerDefaults: Schema.object({
+        partition: Schema.string(),
+        account: Schema.string(),
+        qos: Schema.string(),
+        time: Schema.string(),
+        cpusPerTask: Schema.number(),
+        memory: Schema.string(),
+        gpus: Schema.number(),
+      }).description("Default Slurm resources for jobs on this server."),
+      jobRoot: Schema.string().description("Remote directory for job scripts and logs; ~ expands to HOME."),
     }),
   )
     .default([])

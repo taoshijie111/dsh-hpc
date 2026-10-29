@@ -17,6 +17,14 @@ export interface ServerSpec {
   keyPath?: string;
   /** Credential reference holding the private key passphrase. */
   keyPassphraseRef?: string;
+  /** Scheduling backend: auto detects and caches, bare and slurm force one. */
+  kind?: "auto" | "bare" | "slurm";
+  /** Cached result of the auto detection. */
+  resolvedKind?: "bare" | "slurm";
+  /** Default Slurm resources for jobs submitted to this server. */
+  schedulerDefaults?: SchedulerDefaults;
+  /** Remote directory for job scripts and logs; ~ expands to the login HOME. */
+  jobRoot?: string;
   /** Pinned host key fingerprint, e.g. `SHA256:...`. Empty means first use pins it. */
   hostKey?: string;
 }
@@ -51,6 +59,16 @@ export class MultiserversError extends Error {
 }
 
 /** Namespace/id of this plugin's Loader entry; settings writes address it. */
+export type SchedulerDefaults = {
+  partition?: string;
+  account?: string;
+  qos?: string;
+  time?: string;
+  cpusPerTask?: number;
+  memory?: string;
+  gpus?: number;
+};
+
 export const PLUGIN_ID = "multiservers";
 
 export function findServer(config: Config, id: string): ServerSpec {
