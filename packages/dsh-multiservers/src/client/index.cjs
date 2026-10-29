@@ -107,6 +107,106 @@ window.__ModuleLoader__.load({
     }
 
 
+
+    function formatUsage(sample) {
+      const parts = [];
+      if (sample.load) parts.push(`负载  ${sample.load}`);
+      if (sample.memory) parts.push(`内存
+${sample.memory}`);
+      if (sample.cpu) parts.push(`CPU
+${sample.cpu}`);
+      parts.push(`GPU
+${sample.gpu && sample.gpu !== "none" ? sample.gpu : "未检测到 GPU"}`);
+      if (sample.disk) parts.push(`磁盘
+${sample.disk}`);
+      if (sample.jobs) parts.push(`我的作业
+${sample.jobs}`);
+      return parts.join(String.fromCharCode(10, 10));
+    }
+
+    function StatusPanel() {
+      const [data, setData] = React.useState(null);
+      const [error, setError] = React.useState("");
+      const [usage, setUsage] = React.useState({});
+      const [busy, setBusy] = React.useState(false);
+
+      const load = React.useCallback(async () => {
+        setBusy(true);
+        setError("");
+        try {
+          const response = await fetch("/api/multiservers/status", { headers: { "x-multiservers-request": "1" } });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+          setData(body);
+        } catch (failure) {
+          setError((failure && failure.message) || String(failure));
+        } finally {
+          setBusy(false);
+        }
+      }, []);
+
+      React.useEffect(() => {
+        void load();
+      }, [load]);
+
+      const sample = async (id) => {
+        setUsage((current) => ({ ...current, [id]: { loading: true } }));
+        try {
+          const response = await fetch(`/api/multiservers/usage?server=${encodeURIComponent(id)}`, {
+            headers: { "x-multiservers-request": "1" },
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+          setUsage((current) => ({ ...current, [id]: { text: formatUsage(body) } }));
+        } catch (failure) {
+          setUsage((current) => ({ ...current, [id]: { error: (failure && failure.message) || String(failure) } }));
+        }
+      };
+
+      const servers = (data && data.servers) || [];
+      return h(
+        "div",
+        { style: { ...css.form, marginTop: 0, marginBottom: 14 } },
+        h(
+          "div",
+          { style: { display: "flex", alignItems: "baseline", gap: 10 } },
+          h("span", { style: css.name }, "状态"),
+          h("span", { style: css.grow }),
+          h("button", { type: "button", style: css.button, disabled: busy, onClick: load }, busy ? "刷新中…" : "刷新"),
+        ),
+        h("p", { style: { ...css.lead, margin: "6px 0 10px" } }, "查看服务器是否在线，以及 CPU / GPU / 磁盘占用。"),
+        error ? h("div", { style: css.warn }, `读取失败：${error}`) : null,
+        servers.length === 0
+          ? h("div", { style: css.empty }, "还没有服务器。")
+          : servers.map((server) =>
+              h(
+                "div",
+                { key: server.id, style: { borderTop: "1px solid color-mix(in srgb, currentColor 12%, transparent)", padding: "10px 0" } },
+                h(
+                  "div",
+                  { style: css.row },
+                  h("span", { style: css.name }, server.label || server.id),
+                  h("span", { style: css.sub }, `${server.username}@${server.host}:${server.port}`),
+                  h("span", { style: css.meta }, server.connected ? "在线" : "未连接"),
+                  h("span", { style: css.spacer }),
+                  h("button", { type: "button", style: css.link, onClick: () => sample(server.id) }, "资源占用"),
+                ),
+                h("div", { style: { ...css.sub, marginTop: 2 } },
+                  `会话 ${server.sessions.length ? server.sessions.join("、") : "无"} · 转发 ${server.forwards.length || 0}`),
+                usage[server.id] && usage[server.id].loading
+                  ? h("div", { style: css.sub }, "采样中…")
+                  : null,
+                usage[server.id] && usage[server.id].error
+                  ? h("div", { style: css.warn }, usage[server.id].error)
+                  : null,
+                usage[server.id] && usage[server.id].text
+                  ? h("pre", { style: { ...css.input, marginTop: 8, maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" } }, usage[server.id].text)
+                  : null,
+              ),
+            ),
+      );
+    }
+
     function ConnectionSettings(props) {
       const { form, snapshot } = props;
       const value = snapshot.value ?? {};
@@ -440,6 +540,7 @@ window.__ModuleLoader__.load({
           h("button", { type: "button", style: css.button, disabled: !writable || formOpen, onClick: startAdd }, "添加"),
         ),
         h("p", { style: css.lead }, "管理 agent 可操作的远端机器。"),
+        h(StatusPanel, null),
         h(ConnectionSettings, { form, snapshot }),
         servers.length === 0 && !formOpen ? h("div", { style: css.empty }, "还没有服务器。") : null,
         formPanel,

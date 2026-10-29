@@ -2,7 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import Schema from "@deepseek-ai/schemastery";
 import { ConnectionPool } from "./core/pool.js";
 import { SessionRegistry } from "./core/session.js";
-import { registerCommands } from "./commands.js";
+import { registerApi, setApiContext } from "./api.js";
 import { registerTools } from "./tools.js";
 import type { Config as ConfigShape } from "./core/types.js";
 
@@ -18,7 +18,7 @@ import type { Config as ConfigShape } from "./core/types.js";
 export const name = "dsh-multiservers";
 
 /** Services that must be ready before this plugin registers its tools. */
-export const inject = ["tools", "credentials", "commands"];
+export const inject = ["tools", "credentials"];
 
 export type { ServerSpec } from "./core/types.js";
 
@@ -89,7 +89,11 @@ export function apply(ctx: Context, config: ConfigShape): void {
     idleTimeoutMs: () => live().sessionIdleTimeoutMs ?? 1_800_000,
   });
   registerTools(ctx, live, pool, sessions);
-  registerCommands(ctx, live, pool, sessions);
+  setApiContext(ctx);
+  ctx.inject(["webServer"], (injected) => {
+    const webServer = (injected as unknown as { webServer?: { register(route: never): () => void } }).webServer;
+    if (webServer?.register) registerApi(webServer as never, live, pool, sessions);
+  });
   ctx.effect(
     () => () => {
       void sessions
