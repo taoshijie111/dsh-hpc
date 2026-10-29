@@ -48,7 +48,7 @@ dsh plugin --profile web add dsh-hpc
 From a local checkout or tarball:
 
 ```bash
-git clone <repository> dsh-hpc && cd dsh-hpc
+git clone https://github.com/taoshijie111/dsh-hpc && cd dsh-hpc
 npm install
 npm run build
 dsh plugin --profile web add "$PWD/packages/dsh-hpc"   # or the built .tgz

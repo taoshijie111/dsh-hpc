@@ -1,5 +1,7 @@
 # dsh-hpc
 
+Repository: https://github.com/taoshijie111/dsh-hpc
+
 A DeepSeek Harness plugin for HPC and remote server work: pooled SSH connections, sticky
 shell sessions, Slurm and bare-metal background jobs with completion notices, resumable
 single-file/directory/queue transfers, and a settings panel with live resource sampling.

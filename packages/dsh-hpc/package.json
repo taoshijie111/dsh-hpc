@@ -79,5 +79,13 @@
     "remote"
   ],
   "license": "MIT",
-  "author": "dsh-hpc contributors"
+  "author": "dsh-hpc contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taoshijie111/dsh-hpc.git"
+  },
+  "homepage": "https://github.com/taoshijie111/dsh-hpc#readme",
+  "bugs": {
+    "url": "https://github.com/taoshijie111/dsh-hpc/issues"
+  }
 }
