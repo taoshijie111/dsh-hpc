@@ -1,4 +1,4 @@
-# 需求规格 v0.6（草案）
+# 需求规格 v0.8（草案）
 
 | 项 | 内容 |
 | --- | --- |
@@ -19,7 +19,7 @@
 | D3 | **上下文注入只使用 AGENTS.md**（v0.3 的"L1 共享事实+统一工具面"收敛为单一实现路径） | AGENTS.md 是 LF 托管的事实标准，60k+ 项目采用，被 Codex/Gemini CLI/goose/opencode/Zed/Cursor 等原生支持；自研上下文协议没有收益 | **修订** |
 | D4 | 本地 Web UI + 算力左侧边栏 | 跨平台、手机可看；UI 与 MCP 共享同一守护进程状态 | 锁定 |
 | D5 | 文件为权威，索引库为可重建缓存 | 人可读、可 git、可脱离工具存活 | 锁定 |
-| D6 | UI 不参与 agent 会话 | 不为每个 harness 重做集成层 | 锁定 |
+| D6 | **UI 承载 harness 原生界面，但不重写会话**：Web 类 harness 用反向代理 + 内嵌窗口，TUI 类用终端窗口；不实现自有对话协议、不渲染对话内容 | 满足"对话界面就是 harness 自己的"；不修改 harness 代码；harness 升级不破坏我们 | **修订** |
 | D7 | 人工选址 + 显式 stage | 避免意外烧机时/配额；数据流转可追溯 | 锁定 |
 | **D8** | **会话互通整体暂缓**：不实现跨 harness 会话迁移、不存储/解析会话内容；只做 harness 接入 | 先验证"本地项目内核 + 算力外设"本身的价值；等真实使用反馈再决定是否引入 | **新增** |
 | **D9** | **复用优先**：能复用成熟实现的层不自研 | 避免造轮子；把工程量集中在唯一的差异化部分（账本/状态机/stage） | **新增** |
@@ -27,7 +27,9 @@
 | **D11** | **调度器无关**（v0.5 的"锁定 Slurm"被推翻）：工具只做配置管理 + 连接/执行/传输打通，任务如何提交交由 agent 决定；端点能力由只读探针发现并写入画像 | 用户实际环境混合（Slurm 集群与裸金属并存）；把调度语义放进工具会让"裸金属"变成二等公民 | **修订** |
 | **D12** | **技术栈 TypeScript/Node；三个 harness 全接** | 前后端同语言、类型共享（shared 契约）、官方 MCP SDK 成熟；三 harness 全接才能验证 FR-8 抽象是否成立 | **新增** |
 | **D13** | **凭据模型**：密码与私钥并列支持；密码/私钥不得明文入库到项目目录或 git，走 OS 凭据库或本地加密存储 | 用户明确要求"填 IP/端口/用户名/密码"；但凭据泄露是不可接受风险 | **新增** |
-| **D14** | **接入三层降级**：①MCP server（结构化工具）→ ②CLI + AGENTS.md 指令（任何有 shell 的 harness）→ ③原生协议适配器（仅当工具自己承载会话时才需要，MVP 不做） | 不是所有 harness 都支持 MCP（dsh 未确认）；CLI 是通用兜底，且人类可直接使用；③ 是 Citadel 的路线，与 D6 冲突故排除 | **新增** |
+| **D14** | **接入拆成两个独立维度**：**工具面**（MCP 优先 → CLI + AGENTS.md 兜底）与**界面承载**（Web 代理窗口 → 终端窗口 → 外部唤起兜底）。原生协议适配器（自建会话）不采用 | 工具能力与会话呈现是两件事，拆开后各自可选最优实现；界面承载只依赖 harness 的公开启动输出，不依赖内部协议，升级免疫 | **修订** |
+| **D15** | **harness 进程由 daemon 托管**：Web 类以 detached 子进程运行（会话数据在 harness 自己的 store，重启可重拉）；TUI 类以 node-pty 托管（Windows 用 ConPTY）；**不依赖 tmux** | Citadel 用 tmux 托管 dsh web，Windows 无 tmux；本地环境是 Windows，必须跨平台 | **新增** |
+| **D16** | **直接复用 Citadel 的页面承载代码**：`carrier-protocol`、`web-carrier`、`carrier-process` 移植进本仓库；不改其协议与安全模型，只做重命名与跨平台适配 | 用户确认 Citadel 为其自有项目，代码可复用；该部分是 640 行、自包含、已被真实使用验证过的实现，重写无收益 | **新增** |
 
 **由 D3 + D6 + D8 删除的能力（相对 v0.3）：** 会话中枢、transcript 存储、harness 适配层、会话索引器、L2 事件溯源快照、会话转写导出。本工具在 MVP 阶段不保存、不解析、不重放任何 agent 会话内容。
 
@@ -77,7 +79,7 @@
 | --- | --- |
 | 远端 agent / 常驻 helper | D2 |
 | 跨 harness 会话迁移与转录 | D8（见 §14 暂缓清单） |
-| 会话内容存储与解析 | D6 + D8 |
+| 自研会话 UI / 原生协议适配器 | D6 修订 + D8：界面用 harness 自带的，工具不重写会话 |
 | 大数据镜像同步 | 大文件驻留远端，本地留引用 |
 | 多用户、权限体系、协作 | 单用户个人工具 |
 | HPC 侧 Web UI | D2 |
@@ -180,15 +182,39 @@
 | FR-7.2 | 简单操作：测试连接、浏览远端目录、查看运行中作业、取消 | 与 MCP 工具语义一致 |
 | FR-7.3 | 危险操作二次确认并说明影响 | 不可一键误删 |
 
-### 5.8 Harness 接入（FR-8，新增）
+### 5.8 Harness 接入（FR-8）
 
 | 编号 | 需求 | 验收 |
 | --- | --- | --- |
 | FR-8.1 | 识别本机已安装的 harness（dsh / kimi / codex），记录可执行路径与版本 | 列出可用/不可用状态 |
-| FR-8.2 | 为每个 harness 生成/更新 MCP 服务器注册（stdio shim 或 HTTP），可一键安装与卸载 | 配置变更可回滚，写入前备份 |
-| FR-8.3 | 在项目目录投放 AGENTS.md 投影 | 与 FR-6 一致 |
-| FR-8.4 | 接入不侵入 harness 原生行为：不改其会话存储、不代理其推理请求 | 卸载后 harness 恢复原状 |
-| FR-8.5 | 提供"接入自检"：验证该 harness 确实能调用到 MCP 工具 | 自检结果可复现、可导出 |
+| FR-8.2 | 判定其原生界面形态（web / tui / both），并据此选择承载方式（FR-9） | 判定结果可手工覆盖 |
+| FR-8.3 | **工具面**注册：MCP server（stdio/HTTP）优先；不支持 MCP 时提供 CLI 子命令 + AGENTS.md 使用说明 | 配置变更可回滚，写入前备份 |
+| FR-8.4 | 在项目目录投放 AGENTS.md 投影 | 与 FR-6 一致 |
+| FR-8.5 | **不侵入**：不修改 harness 代码、不写它的会话存储、不代理其推理请求；卸载后 harness 恢复原状 | 卸载后目录/配置无残留 |
+| FR-8.6 | 接入自检：验证该 harness 能调用到工具，且界面能被承载 | 自检可复现、可导出 |
+
+### 5.9 Agent 窗口（FR-9）
+
+> 对话界面 = harness 自身的界面，本工具只做承载、不重写。
+
+| 编号 | 需求 | 验收 |
+| --- | --- | --- |
+| FR-9.1 | **Web 承载窗口**：反向代理 harness 的本地 Web UI；每个 target 独立 origin/端口；一次性 ticket 换 HttpOnly cookie；转发 WebSocket upgrade；剥离阻断内嵌的响应头 | dsh web / kimi web 能在窗口内正常对话与流式输出 |
+| FR-9.2 | **终端承载窗口**：node-pty + xterm.js，cwd = 项目目录；滚动缓冲有上限；断线重连恢复画面 | codex TUI 在窗口内可用 |
+| FR-9.3 | **外部唤起兜底**：打开系统终端或浏览器，UI 仅记录"已在外部启动" | 承载失败时仍能工作 |
+| FR-9.4 | 窗口与项目绑定：一个窗口属于一个项目，切换项目时按项目恢复窗口集合 | 关闭 UI 再打开可恢复 |
+| FR-9.5 | 关闭浏览器不终止 harness 进程 | 重连后窗口内容仍在 |
+
+### 5.10 进程托管与恢复（FR-10）
+
+| 编号 | 需求 | 验收 |
+| --- | --- | --- |
+| FR-10.1 | daemon 持有 harness 进程（Web 类 detached 子进程；TUI 类 PTY 会话） | 进程归属可查（pid/启动时间） |
+| FR-10.2 | 重启恢复：Web 类重拉并重新发现地址；TUI 类标记会话已结束并提供 `resume` 入口 | 重启后不产生僵尸进程 |
+| FR-10.3 | 跨平台：Windows（ConPTY）/ macOS / Linux；不依赖 tmux | 三平台各有一条冒烟记录 |
+| FR-10.4 | 地址发现：优先显式固定端口；否则解析 harness 公开启动输出（如 `dsh web: http://127.0.0.1:<port>/?token=...`、kimi 启动时的 bearer token）；解析失败降级外部唤起 | 解析失败有明确错误与降级动作 |
+| FR-10.5 | 版本变化防护：只依赖公开启动输出，不解析内部协议；harness 升级后用自检确认承载仍可用 | 升级场景有回归用例 |
+
 
 ---
 
@@ -284,9 +310,13 @@
 | R3 | 跨网传输是主瓶颈 | stage/pull 体验差 | rsync 断点续传 + 校验 + 体积预告 |
 | R4 | 上下文膨胀 | harness 溢出或成本上升 | token 预算 + 分层注入 |
 | R5 | 多入口并发写同一项目 | 数据损坏 | 单写者守护进程 + 串行化 |
-| R6 | 调度器差异（Slurm/PBS/LSF） | 工具面需抽象 | 先单一调度器，接口预留 adapter |
-| **R7** | **harness 私有配置格式随版本漂移** | 接入失效 | 写入前备份 + 自检可重跑 + 失败回滚 |
+| R6 | ~~调度器差异~~ | ~~工具面需抽象~~ | 已消解：D11 调度器无关，工具不碰调度语义 |
+| **R7** | **harness 私有配置格式随版本漂移** | 工具面注册失效 | 写入前备份 + 自检可重跑 + 失败回滚 |
 | **R8** | **第三方组件许可证误用** | 法律风险 | D10 + NFR-8 + 依赖清单审计 |
+| **R9** | **harness Web UI 的启动输出格式变化**（地址/token 行改写） | 承载失败、窗口打不开 | 优先固定端口；只解析公开启动输出；解析失败降级外部唤起；纳入接入自检 |
+| **R10** | **内嵌页面被 X-Frame-Options/CSP/Host 校验拦截** | 窗口白屏 | 反向代理重写响应头与 Host；kimi 使用其代理模式参数；仍失败则外部唤起 |
+| **R11** | **Windows ConPTY 下 TUI 渲染异常**（颜色、宽字符、按键） | codex 窗口体验差 | 用 xterm.js + ConPTY 实测；异常时降级外部终端；记录为已知限制 |
+| **R12** | **harness Web UI 自带鉴权差异**（dsh 用 URL token，kimi 用 bearer token） | 代理适配成本 | 代理层按 target 配置鉴权策略；token 一律换成 ticket + HttpOnly cookie |
 
 ---
 
@@ -428,3 +458,42 @@ SSH_HOST=<host> SSH_USER=<user> SSH_PASS=<password> node scripts/dev/ssh-probe.m
 ```
 
 探测脚本 `scripts/dev/ssh-probe.mjs` 只包含只读命令，可审计后执行；S1 起该逻辑迁入核心的 `hpc_probe` 工具。
+
+### 16.5 S0.3 已完成：harness 原生界面承载可行性
+
+核实环境：本机，2026-10-29（只读探测，未启动/修改任何 harness 配置）。
+
+| harness | 原生界面形态 | 启动方式 | 承载方案 | 关键证据 |
+| --- | --- | --- | --- | --- |
+| **dsh** | Web UI（+ TUI） | `dsh --profile web --no-open --port 0`，就绪后打印 `dsh web: http://127.0.0.1:<port>/?token=<token>` | 反向代理 + 内嵌窗口 | `dsh --help`；Citadel 已实现同款解析（`src/server/own-interfaces/dsh.ts:179`） |
+| **kimi** | Web UI（+ TUI + ACP） | `kimi web --port <p>`，本地 HTTP + bearer token；官方支持置于自有认证代理之后（`--dangerous-bypass-auth`、`--allowed-host`） | 反向代理 + 内嵌窗口 | `kimi web --help` 全量参数 |
+| **codex** | **仅 TUI**（无 web 子命令） | 默认交互式 TUI；另有 `exec` / `app-server` / `mcp-server` / `resume` | 终端窗口（node-pty + xterm.js） | `codex --help` 子命令清单 |
+
+**承载结论**：
+
+1. **两种承载原语足够**：Web 代理窗口（dsh/kimi）+ 终端窗口（codex）。不需要原生协议适配器，也不需要 harness 提供 UI 插件机制。
+2. **反向代理是硬需求**，原因：token 不能交给前端；harness 有 Host/DNS-rebinding 校验；手机访问时 `127.0.0.1` 会指向手机自身；每 target 需独立 origin 做隔离；WebSocket upgrade 必须转发。
+3. **Citadel 的可借鉴部分**：`own-interfaces` + `web-carrier` 的 window carrier 设计（独立 origin、一次性 ticket→cookie、hop-by-hop 头过滤、WS 转发、页面端口池）。**不可借鉴部分**：其 Pi/ACP/app-server 会话适配器（自建会话，与 D6 冲突）。
+4. **Citadel 方案的平台缺口**：它用 tmux 托管 dsh web 进程；本机为 Windows，无 tmux，故 D15 改为 daemon 直接托管子进程/PTY。
+5. **当前 dsh WebUI 未携带页面时返回 401**（需 token），验证了 FR-9.1 的 ticket→cookie 流程必要性。
+
+**待验证（S1 内完成）**：
+
+- codex TUI 在 Windows ConPTY + xterm.js 下的渲染与按键（R11）
+- kimi web 与 dsh web 的响应头是否阻断 iframe，以及代理重写规则（R10）
+- harness 升级后启动输出格式稳定性的回归用例（R9）
+
+
+### 16.6 S1 进行中：页面承载层已落地并验证
+
+| 步骤 | 结果 | 证据 |
+| --- | --- | --- |
+| 移植 `carrier-protocol` + `web-carrier` | ✅ 完成，包名改为 `@multiservers/*`，`citadel` 字样已清理 | `packages/carrier-protocol/`、`packages/web-carrier/` |
+| 入口路径与 cookie 前缀更名 | ✅ `/__multiservers/enter`、`multiservers_page_*` | `packages/carrier-protocol/src/index.ts:73`、`packages/web-carrier/src/carrier.ts:124` |
+| 构建 | ✅ `npm run build` 通过，产出 `dist/*.js` + `*.d.ts` | 两个包的 `dist/` |
+| **Windows 兼容性冒烟** | ✅ **7/7 通过**：启动→监听→ticket→pass cookie→转发上游→匿名拒绝→撤销拒绝 | `npm run test:carrier`（`scripts/dev/carrier-smoke.mjs`） |
+| 关键跨平台适配 | 上游中继 socket 在 Windows 上用命名管道 `\\.\pipe\multiservers-*`，在 POSIX 上用 Unix domain socket | 冒烟测试同时覆盖两种分支 |
+
+**冒烟测试证明的链路**：`fork(carrier)` → IPC 下发 target → carrier 监听独立端口 → `GET /__multiservers/enter?ticket=…` 返回 303 + `HttpOnly; SameSite=Strict` cookie → 带 cookie 请求到达上游 → 无 pass 返回 401 → `revoke-passes` 后旧 pass 失效。
+
+**尚未验证（留待接入真实 harness 时）**：WebSocket upgrade 转发、真实 dsh/kimi 页面的响应头（XFO/CSP）重写、目标应用断线重连。
