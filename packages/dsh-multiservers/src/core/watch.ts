@@ -42,23 +42,35 @@ function sleep(ms: number, signal: { cancelled: boolean }): Promise<void> {
  * finishes. Polling is adaptive (15s growing to 15min) and only asks the
  * scheduler/process for state: no remote sampler, no remote log growth.
  */
+export type WatchOutcome = { id?: string; ownerBound?: boolean; error?: string };
+
 export function startJobWatcher(
   ctx: Context,
   pool: ConnectionPool,
   getServers: () => ServerSpec[],
   recordId: string,
-  ownerSessionId?: string,
-): string | null {
-  const jobs = ctx.get("jobs") as JobsService | undefined;
-  if (!jobs?.start) return null;
+  agent?: { sessionId?: string; ctx?: unknown },
+): WatchOutcome {
+  const root = ctx.get("jobs") as JobsService | undefined;
+  const agentCtx = agent?.ctx as { jobs?: JobsService } | undefined;
+  const agentJobs = agentCtx?.jobs;
+  const candidates: Array<{ service: JobsService; scope: string }> = [];
+  if (agentJobs?.start) candidates.push({ service: agentJobs, scope: "agent" });
+  if (root?.start && root !== agentJobs) candidates.push({ service: root, scope: "host" });
+  if (candidates.length === 0) {
+    const message = "background job service is not mounted";
+    console.error(`[multiservers] watcher unavailable: ${message}`);
+    return { error: message };
+  }
   const state = { cancelled: false };
-  try {
-    return jobs.start({
+  const errors: string[] = [];
+  const start = (service: JobsService, ownerSessionId?: string): string => {
+    return service.start({
       kind: "mss-job",
       label: `远程作业 ${recordId}`,
       ...(ownerSessionId ? { owner: ownerSessionId } : {}),
       outputLimitBytes: 4096,
-      run(job: JobHandle): JobHooks {
+        run(job: JobHandle): JobHooks {
         const done = (async (): Promise<JobOutcome> => {
           let delay = FIRST_DELAY;
           let lastState = "";
@@ -102,9 +114,27 @@ export function startJobWatcher(
         };
       },
     });
-  } catch {
-    return null;
+  };
+  for (const candidate of candidates) {
+    try {
+      return { id: start(candidate.service, agent?.sessionId), ownerBound: Boolean(agent?.sessionId) };
+    } catch (error) {
+      errors.push(`${candidate.scope}: ${(error as Error).message}`);
+    }
   }
+  // Last resort: an unowned job still updates the ledger, but the session may
+  // not receive a completion notice — report that honestly.
+  for (const candidate of candidates) {
+    try {
+      const id = start(candidate.service, undefined);
+      console.error(`[multiservers] watcher registered unowned: ${errors.join(" | ")}`);
+      return { id, ownerBound: false, error: errors.join(" | ") };
+    } catch (error) {
+      errors.push(`${candidate.scope}/unowned: ${(error as Error).message}`);
+    }
+  }
+  console.error(`[multiservers] watcher registration failed: ${errors.join(" | ")}`);
+  return { error: errors.join(" | ") };
 }
 
 /** Resume watchers for unfinished jobs after a plugin reload. */
@@ -116,7 +146,7 @@ export function resumeWatchers(
   let count = 0;
   for (const record of listJobs()) {
     if (isTerminal(record.state) || record.watchJobId) continue;
-    if (startJobWatcher(ctx, pool, getServers, record.id)) count += 1;
+    if (startJobWatcher(ctx, pool, getServers, record.id).id) count += 1;
   }
   return count;
 }

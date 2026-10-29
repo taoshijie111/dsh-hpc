@@ -469,15 +469,17 @@ export function registerTools(
           },
         );
         let watchJobId: string | null = null;
+        let watchError: string | undefined;
         if (args.watch !== false) {
-          const owner = (exec as unknown as { agent?: { sessionId?: string } }).agent?.sessionId;
-          watchJobId = startJobWatcher(ctx, pool, () => getConfig().servers, record.id, owner);
-          if (watchJobId) {
-            record.watchJobId = watchJobId;
+          const watch = startJobWatcher(ctx, pool, () => getConfig().servers, record.id, exec.agent);
+          if (watch.id) {
+            watchJobId = watch.id;
+            record.watchJobId = watch.id;
             saveJob(record);
           }
+          if (!watch.id || watch.ownerBound === false) watchError = watch.error ?? "watcher is not bound to this session; completion notices may not arrive";
         }
-        return { ...record, jobId: record.id, watching: Boolean(watchJobId) };
+        return { ...record, jobId: record.id, watching: Boolean(watchJobId), ...(watchError ? { watchError } : {}) };
       },
     }),
   );
