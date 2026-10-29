@@ -60,3 +60,18 @@ npm run build
 npm run typecheck
 MSS_TEST_HOST=<host> MSS_TEST_USER=<user> MSS_TEST_KEY=<key> node test/tools-smoke.mjs
 ```
+
+
+## Settings page
+
+The client half adds a **Servers** section to DSH Settings (registered into the
+`settings.section` slot). It lists configured servers, adds new ones (id, label, host, port,
+user, auth mode, key path or password, optional pinned fingerprint) and removes them.
+
+- Non-secret fields are written through the client `configForms` service.
+- Passwords are written through `remote.credentials` into DSH's credential store as
+  `MSS_<ID>_PASSWORD`; they never enter the profile configuration.
+- The page only appears while the Host serves the `multiservers` settings namespace
+  (`configForms.whileServed`).
+
+Editing an existing server and a "test connection" action are the next increments.

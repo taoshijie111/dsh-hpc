@@ -4,7 +4,7 @@
 | --- | --- |
 | 定位 | **DeepSeek Harness 插件**：管理远端服务器并暴露操作协议（工具）。不做独立 UI、不做多 agent 会话协同、不做项目内核 |
 | 契约基线 | DSH `0.2.1-rc.2` 及以上（已在桌面端 `0.2.1-rc.3` 与 npm CLI `0.2.1-rc.2` 验证） |
-| 形态 | 一个 bundle 包 `dsh-multiservers`：Host 半（Config + 工具 + 凭据）＋ Client 半（设置卡片，下一片） |
+| 形态 | 一个 bundle 包 `dsh-multiservers`：Host 半（Config + 工具 + 凭据）＋ Client 半（Settings → Servers 设置页） |
 | 包管理器/语言 | TypeScript / Node ≥ 24 |
 
 ## 1. 目标与非目标
@@ -48,6 +48,7 @@ DSH 进程
 | 工具级集成测试（`npm test`，真实主机） | **16/16 通过**：注册 12 工具、连接 3.7s、指纹匹配、Slurm/rsync 探测、login shell 执行、cwd、列目录 65 项、上传/下载往返一致、stat（44B）、删除 |
 | 真实 DSH 加载 | `dsh --profile mss --dump-config` 出现 `# == dsh-multiservers` 层；`--dump-config-schema` 读出 `hostKey/connectTimeoutMs/passwordRef` |
 | 网页端运行 | `dsh --profile mss --port 4400` 启动成功，无本插件报错，页面可达 |
+| Client 半构建下发 | 页面 HTML 引用 `dsh-multiservers/client.js`；单独 chunk 200 / 12,732 B，含 `settings.section`、`configForms`、`remote.credentials` |
 
 ## 5. 安装与测试
 
@@ -65,7 +66,7 @@ dsh --profile mss --port 4400
 
 ## 6. 后续切片
 
-1. **Client 半**：Settings → Plugins 里的「Servers」卡片，增删改 IP/端口/账户/密码（`settings.plugins.tab` 槽，lazy-CJS 产物，`exports['./client']` + `dsh.client`）
+1. ~~**Client 半**~~（已完成，0.2.1 契约）：Settings 导航新增「Servers」页（`settings.section` 槽，lazy-CJS 产物，`exports['./client']` + `dsh.client`）；非敏感字段经 `configForms` 写入，密码经 `remote.credentials` 写入凭据库。待补：编辑已有服务器、连接测试按钮
 2. 凭据写入路径从「工具」扩展到「设置卡片」；密码字段使用 `role('secret')` + 凭据引用
 3. 传输增强：rsync 优先、断点续传、sha256 校验
 4. 后台长任务：`ctx.jobs.start` + `run_in_background`
