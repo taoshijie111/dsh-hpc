@@ -1,17 +1,18 @@
 import type { Context } from "@deepseek-ai/cordis";
 import Schema from "@deepseek-ai/schemastery";
+import { ConnectionPool } from "./core/pool.js";
+import { SessionRegistry } from "./core/session.js";
 import { registerTools } from "./tools.js";
 import type { Config as ConfigShape } from "./core/types.js";
 
 /**
  * dsh-multiservers — remote server management for DeepSeek Harness.
  *
- * Host half: configuration, credentials, and tools. The browser half adds the
- * "Servers" settings page.
+ * Host half: connections, named shell sessions, transfers, tools. The browser
+ * half adds the "服务器" settings page.
  *
- * Fields are `.volatile()` because the settings page edits them while the
- * plugin keeps running; every tool call reads the live section instead of the
- * apply-time snapshot (see `liveConfig`).
+ * Every field is `.volatile()` so the settings page can edit it while the plugin
+ * keeps running; tools read the live section instead of the apply-time snapshot.
  */
 export const name = "dsh-multiservers";
 
@@ -20,8 +21,6 @@ export const inject = ["tools", "credentials"];
 
 export type { ServerSpec } from "./core/types.js";
 
-// Schemastery's Volatile<> wrapper changes the static type of an array field;
-// the runtime schema is what the Loader validates, so narrow it back here.
 export const Config = Schema.object({
   servers: Schema.array(
     Schema.object({
@@ -42,7 +41,19 @@ export const Config = Schema.object({
     .description("Remote servers this workspace can operate.")
     .volatile(),
   connectTimeoutMs: Schema.number().default(15000).description("SSH connect timeout in milliseconds.").volatile(),
-  commandTimeoutMs: Schema.number().default(120000).description("Default remote command timeout in milliseconds.").volatile(),
+  commandTimeoutMs: Schema.number()
+    .default(120000)
+    .description("Default shell command timeout in milliseconds.")
+    .volatile(),
+  keepaliveIntervalMs: Schema.number()
+    .default(30000)
+    .description("TCP keepalive probe interval in milliseconds; 0 disables.")
+    .volatile(),
+  idleTimeoutMs: Schema.number()
+    .default(600000)
+    .description("Close idle connections after this many milliseconds; 0 disables.")
+    .volatile(),
+  maxSessionsPerServer: Schema.number().default(4).description("Named shell sessions allowed per server.").volatile(),
 });
 
 /** Live section while the settings service is mounted; apply-time config otherwise. */
@@ -54,7 +65,7 @@ export function liveConfig(ctx: Context, fallback: ConfigShape): ConfigShape {
   try {
     const own = settings.describe().find((entry) => entry.ns === "multiservers");
     const value = own?.value as ConfigShape | undefined;
-    if (value && Array.isArray(value.servers)) return value;
+    if (value && Array.isArray(value.servers)) return { ...fallback, ...value };
   } catch {
     /* fall back to the apply-time configuration */
   }
@@ -62,5 +73,22 @@ export function liveConfig(ctx: Context, fallback: ConfigShape): ConfigShape {
 }
 
 export function apply(ctx: Context, config: ConfigShape): void {
-  registerTools(ctx, () => liveConfig(ctx, config));
+  const live = () => liveConfig(ctx, config);
+  const pool = new ConnectionPool({
+    connectTimeoutMs: () => live().connectTimeoutMs ?? 15000,
+    keepaliveIntervalMs: () => live().keepaliveIntervalMs ?? 30000,
+    idleTimeoutMs: () => live().idleTimeoutMs ?? 600000,
+  });
+  const sessions = new SessionRegistry(pool, () => live().maxSessionsPerServer ?? 4);
+  registerTools(ctx, live, pool, sessions);
+  ctx.effect(
+    () => () => {
+      void sessions
+        .closeAll()
+        .catch(() => undefined)
+        .then(() => pool.closeAll())
+        .catch(() => undefined);
+    },
+    "dsh-multiservers: close connections on unload",
+  );
 }

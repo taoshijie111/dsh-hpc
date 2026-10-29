@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
-import { Client, type ConnectConfig, type SFTPWrapper } from "ssh2";
+import { Client, type ConnectConfig } from "ssh2";
 import { createHash } from "node:crypto";
-import { MultiserversError, shellQuote, type Config, type ExecResult, type ServerSpec } from "./types.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
+import { MultiserversError, shellQuote, type ExecResult, type ServerSpec } from "./types.js";
 
-/** `<owner>/<id>` credential record; we keep passwords in the DSH credential store. */
+/** Credential reference holding a server password (never stored in config). */
 export function passwordRefFor(id: string): string {
   const clean = id.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
   return `MSS_${clean}_PASSWORD`;
@@ -16,7 +16,7 @@ export async function resolvePassword(ctx: Context, server: ServerSpec): Promise
   const hit = await ctx.credentials.resolve(credentialRef(refName));
   if (!hit || !hit.value) {
     throw new MultiserversError(
-      `No password stored for server "${server.id}". Set credential ${refName} (the DSH credential store, same place provider API keys live).`,
+      `No password stored for server "${server.id}". Set credential ${refName} in the DSH credential store.`,
     );
   }
   return hit.value;
@@ -40,11 +40,7 @@ export type ConnectOptions = {
   expectedFingerprint?: string | null;
 };
 
-export async function connect(
-  ctx: Context,
-  server: ServerSpec,
-  options: ConnectOptions,
-): Promise<Connection> {
+export async function connect(ctx: Context, server: ServerSpec, options: ConnectOptions): Promise<Connection> {
   const client = new Client();
   let observed = "";
   const connectConfig: ConnectConfig = {
@@ -76,7 +72,7 @@ export async function connect(
   }
 
   await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error & { level?: string }) => {
+    const onError = (error: Error) => {
       client.removeListener("ready", onReady);
       reject(
         new MultiserversError(
@@ -93,16 +89,12 @@ export async function connect(
     client.connect(connectConfig);
   });
 
-  return {
-    client,
-    fingerprint: observed,
-    close: () => client.end(),
-  };
+  return { client, fingerprint: observed, close: () => client.end() };
 }
 
-/** Run a command through the remote login shell with a hard timeout. */
+/** Run a one-off command through the remote login shell with a hard timeout. */
 export function execRemote(
-  connection: Connection,
+  client: Client,
   command: string,
   options: { timeoutMs: number; cwd?: string; signal?: AbortSignal },
 ): Promise<ExecResult> {
@@ -126,7 +118,7 @@ export function execRemote(
       timedOut = true;
       finish({ code: null, stdout, stderr, timedOut, durationMs: Date.now() - started });
       try {
-        connection.client.end();
+        client.end();
       } catch {
         /* already closed */
       }
@@ -134,14 +126,14 @@ export function execRemote(
     const onAbort = () => {
       finish({ code: null, stdout, stderr, timedOut: true, durationMs: Date.now() - started });
       try {
-        connection.client.end();
+        client.end();
       } catch {
         /* already closed */
       }
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
-    connection.client.exec(wrapped, (error, stream) => {
+    client.exec(wrapped, (error, stream) => {
       if (error) {
         clearTimeout(timer);
         options.signal?.removeEventListener("abort", onAbort);
@@ -163,119 +155,5 @@ export function execRemote(
         reject(new MultiserversError(`Remote command stream failed: ${streamError.message}`));
       });
     });
-  });
-}
-
-function sftpOf(connection: Connection): Promise<SFTPWrapper> {
-  return new Promise((resolve, reject) => {
-    connection.client.sftp((error, sftp) => (error ? reject(error) : resolve(sftp)));
-  });
-}
-
-export type RemoteEntry = {
-  name: string;
-  type: "file" | "directory" | "symlink" | "other";
-  size: number;
-  mode: number;
-  modifiedAt: string | null;
-  linkTarget?: string;
-};
-
-type RawEntry = { filename: string; longname: string; attrs: Record<string, unknown> };
-
-export async function listDirectory(connection: Connection, path: string): Promise<RemoteEntry[]> {
-  const sftp = await sftpOf(connection);
-  const entries = await new Promise<RawEntry[]>((resolve, reject) => {
-    sftp.readdir(path, (error, list) => (error ? reject(error) : resolve(list as unknown as RawEntry[])));
-  });
-  return entries
-    .map((entry) => {
-      const attrs = entry.attrs as {
-        mode?: number;
-        size?: number;
-        mtime?: number;
-        isDirectory?: () => boolean;
-        isFile?: () => boolean;
-        isSymbolicLink?: () => boolean;
-      };
-      const mode = attrs.mode ?? 0;
-      const type = attrs.isDirectory?.()
-        ? "directory"
-        : attrs.isSymbolicLink?.()
-          ? "symlink"
-          : attrs.isFile?.()
-            ? "file"
-            : "other";
-      const linkTarget = type === "symlink" ? entry.longname.split(" -> ")[1] : undefined;
-      return {
-        name: entry.filename,
-        type,
-        size: attrs.size ?? 0,
-        mode,
-        modifiedAt: attrs.mtime ? new Date(attrs.mtime * 1000).toISOString() : null,
-        ...(linkTarget ? { linkTarget } : {}),
-      } as RemoteEntry;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export async function statPath(connection: Connection, path: string): Promise<RemoteEntry> {
-  const sftp = await sftpOf(connection);
-  const stats = await new Promise<Record<string, unknown>>((resolve, reject) => {
-    sftp.stat(path, (error, value) => (error ? reject(error) : resolve(value as never)));
-  });
-  const attrs = stats as {
-    mode?: number;
-    size?: number;
-    mtime?: number;
-    isDirectory?: () => boolean;
-    isFile?: () => boolean;
-  };
-  const type = attrs.isDirectory?.() ? "directory" : attrs.isFile?.() ? "file" : "other";
-  return {
-    name: path.split("/").pop() || path,
-    type,
-    size: attrs.size ?? 0,
-    mode: attrs.mode ?? 0,
-    modifiedAt: attrs.mtime ? new Date(attrs.mtime * 1000).toISOString() : null,
-  };
-}
-
-export async function makeDirectory(connection: Connection, path: string, recursive: boolean): Promise<void> {
-  const sftp = await sftpOf(connection);
-  if (!recursive) {
-    await new Promise<void>((resolve, reject) => {
-      sftp.mkdir(path, (error) => (error ? reject(error) : resolve()));
-    });
-    return;
-  }
-  const parts = path.split("/").filter(Boolean);
-  let current = path.startsWith("/") ? "" : ".";
-  for (const part of parts) {
-    current = `${current}/${part}`;
-    await new Promise<void>((resolve) => {
-      sftp.mkdir(current, () => resolve());
-    });
-  }
-}
-
-export async function removePath(connection: Connection, path: string, recursive: boolean): Promise<void> {
-  if (!path.startsWith("/")) throw new MultiserversError(`Refusing to remove a relative path: ${path}`);
-  const command = recursive ? `rm -rf -- ${shellQuote(path)}` : `rm -f -- ${shellQuote(path)}`;
-  const result = await execRemote(connection, command, { timeoutMs: 60_000 });
-  if (result.code !== 0) throw new MultiserversError(`Remove failed (exit ${result.code}): ${result.stderr.trim()}`);
-}
-
-export async function uploadFile(connection: Connection, localPath: string, remotePath: string): Promise<void> {
-  const sftp = await sftpOf(connection);
-  await new Promise<void>((resolve, reject) => {
-    sftp.fastPut(localPath, remotePath, (error) => (error ? reject(error) : resolve()));
-  });
-}
-
-export async function downloadFile(connection: Connection, remotePath: string, localPath: string): Promise<void> {
-  const sftp = await sftpOf(connection);
-  await new Promise<void>((resolve, reject) => {
-    sftp.fastGet(remotePath, localPath, (error) => (error ? reject(error) : resolve()));
   });
 }

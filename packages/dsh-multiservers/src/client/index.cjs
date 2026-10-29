@@ -106,6 +106,77 @@ window.__ModuleLoader__.load({
       );
     }
 
+
+    function ConnectionSettings(props) {
+      const { form, snapshot } = props;
+      const value = snapshot.value ?? {};
+      const [draft, setDraft] = React.useState(null);
+      const [busy, setBusy] = React.useState(false);
+      const [note, setNote] = React.useState("");
+      React.useEffect(() => {
+        setDraft({
+          idleMinutes: Math.round((value.idleTimeoutMs ?? 600000) / 60000),
+          maxSessions: value.maxSessionsPerServer ?? 4,
+          keepaliveSeconds: Math.round((value.keepaliveIntervalMs ?? 30000) / 1000),
+          commandSeconds: Math.round((value.commandTimeoutMs ?? 120000) / 1000),
+          connectSeconds: Math.round((value.connectTimeoutMs ?? 15000) / 1000),
+        });
+      }, [snapshot.revision, snapshot.status]);
+      if (!draft) return null;
+      const writable = snapshot.status === "ready" && snapshot.writable;
+      const update = (patch) => setDraft((current) => ({ ...current, ...patch }));
+      const save = async () => {
+        setBusy(true);
+        setNote("");
+        try {
+          const ops = [
+            ["idleTimeoutMs", Math.max(0, Math.round(Number(draft.idleMinutes) * 60000))],
+            ["maxSessionsPerServer", Math.max(1, Math.round(Number(draft.maxSessions)))],
+            ["keepaliveIntervalMs", Math.max(0, Math.round(Number(draft.keepaliveSeconds) * 1000))],
+            ["commandTimeoutMs", Math.max(1000, Math.round(Number(draft.commandSeconds) * 1000))],
+            ["connectTimeoutMs", Math.max(1000, Math.round(Number(draft.connectSeconds) * 1000))],
+          ];
+          let ok = true;
+          for (const [field, amount] of ops) ok = (await form.set(field, amount)) && ok;
+          setNote(ok ? "已保存" : "保存失败");
+        } catch (error) {
+          setNote(`保存失败：${(error && error.message) || error}`);
+        } finally {
+          setBusy(false);
+        }
+      };
+      return h(
+        "details",
+        { style: { ...css.form, marginTop: 0, marginBottom: 14 } },
+        h(
+          "summary",
+          { style: { cursor: "pointer", fontSize: 12.5, opacity: 0.75 } },
+          `连接设置（空闲 ${draft.idleMinutes} 分钟自动断开）`,
+        ),
+        h(
+          "div",
+          { style: { ...css.grid, marginTop: 12 } },
+          h(Field, { label: "空闲断开（分钟，0 = 不断开）" },
+            h("input", { style: css.input, inputMode: "numeric", value: draft.idleMinutes, onChange: (e) => update({ idleMinutes: e.target.value }) })),
+          h(Field, { label: "每服务器最大会话数" },
+            h("input", { style: css.input, inputMode: "numeric", value: draft.maxSessions, onChange: (e) => update({ maxSessions: e.target.value }) })),
+          h(Field, { label: "保活间隔（秒）" },
+            h("input", { style: css.input, inputMode: "numeric", value: draft.keepaliveSeconds, onChange: (e) => update({ keepaliveSeconds: e.target.value }) })),
+          h(Field, { label: "命令超时（秒）" },
+            h("input", { style: css.input, inputMode: "numeric", value: draft.commandSeconds, onChange: (e) => update({ commandSeconds: e.target.value }) })),
+          h(Field, { label: "连接超时（秒）" },
+            h("input", { style: css.input, inputMode: "numeric", value: draft.connectSeconds, onChange: (e) => update({ connectSeconds: e.target.value }) })),
+        ),
+        h(
+          "div",
+          { style: css.actions },
+          h("button", { type: "button", style: { ...css.button, ...css.primary }, disabled: !writable || busy, onClick: save },
+            busy ? "保存中…" : "保存连接设置"),
+          note ? h("span", { style: css.status }, note) : null,
+        ),
+      );
+    }
+
     function ServersSection(props) {
       const { form, remote } = props;
       const snapshot = React.useSyncExternalStore(
@@ -365,6 +436,7 @@ window.__ModuleLoader__.load({
           h("button", { type: "button", style: css.button, disabled: !writable || formOpen, onClick: startAdd }, "添加"),
         ),
         h("p", { style: css.lead }, "管理 agent 可操作的远端机器。"),
+        h(ConnectionSettings, { form, snapshot }),
         servers.length === 0 && !formOpen ? h("div", { style: css.empty }, "还没有服务器。") : null,
         formPanel,
         rows,

@@ -1,26 +1,11 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
-import {
-  connect,
-  downloadFile,
-  execRemote,
-  listDirectory,
-  makeDirectory,
-  passwordRefFor,
-  removePath,
-  resolvePassword,
-  statPath,
-  uploadFile,
-} from "./core/ssh.js";
-import {
-  MultiserversError,
-  PLUGIN_ID,
-  findServer,
-  shellQuote,
-  type Config,
-  type ServerSpec,
-} from "./core/types.js";
+import type { ConnectionPool } from "./core/pool.js";
+import { downloadWithResume, uploadWithResume } from "./core/transfer.js";
+import type { SessionRegistry } from "./core/session.js";
+import { execRemote, passwordRefFor } from "./core/ssh.js";
+import { MultiserversError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
 
 const text = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }];
 const objectOutput = {
@@ -28,16 +13,12 @@ const objectOutput = {
   render: (_args: unknown, value: unknown) => text(value),
 };
 
-const CONNECT_TIMEOUT = (config: Config) => config.connectTimeoutMs ?? 15_000;
-const COMMAND_TIMEOUT = (config: Config) => config.commandTimeoutMs ?? 120_000;
-
-/** A settings service, when the composition mounts one. */
 type SettingsLike = {
-  describe(): Array<{ ns: string; revision: number }>;
+  describe(): Array<{ ns: string; revision: number; value?: unknown }>;
   update(ns: string, patch: object, expectedRevision?: number): Promise<void>;
 };
 
-async function writeServers(ctx: Context, servers: ServerSpec[]): Promise<void> {
+export async function writeServers(ctx: Context, servers: ServerSpec[]): Promise<void> {
   const settings = ctx.get("settings") as SettingsLike | undefined;
   if (!settings) {
     throw new MultiserversError(
@@ -46,6 +27,13 @@ async function writeServers(ctx: Context, servers: ServerSpec[]): Promise<void> 
   }
   const own = settings.describe().find((entry) => entry.ns === PLUGIN_ID);
   await settings.update(PLUGIN_ID, { servers }, own?.revision);
+}
+
+/** Store a password in the DSH credential store (the same store provider API keys use). */
+export async function storePassword(ctx: Context, serverId: string, password: string): Promise<string> {
+  const refName = passwordRefFor(serverId);
+  await ctx.credentials.set(credentialRef(refName), password);
+  return refName;
 }
 
 function serverSummary(config: Config) {
@@ -72,22 +60,28 @@ const CAPABILITY_COMMAND = [
   "df -h 2>/dev/null | head -12",
 ].join("; ");
 
-export function registerTools(ctx: Context, getConfig: () => Config): Array<() => void> {
+export function registerTools(
+  ctx: Context,
+  getConfig: () => Config,
+  pool: ConnectionPool,
+  sessions: SessionRegistry,
+): Array<() => void> {
   const disposers: Array<() => void> = [];
   const register = (definition: unknown) => {
     disposers.push(ctx.tools.register(definition as never));
   };
+  const commandTimeout = () => getConfig().commandTimeoutMs ?? 120_000;
+  const sessionName = (value?: string) => value?.trim() || "main";
 
   register(
     defineTool({
       name: "server_list",
       description:
-        "List the remote servers configured for this workspace, with host, port, user, authentication mode and whether a host key is pinned. Call this first when a task mentions a server.",
+        "List the remote servers configured for this workspace, with address, user, authentication mode and whether a host key is pinned. Start here when a task mentions a server.",
       parameters: {},
       output: objectOutput,
       async execute() {
-        const config = getConfig();
-        return { servers: serverSummary(config) };
+        return { servers: serverSummary(getConfig()) };
       },
     }),
   );
@@ -96,48 +90,38 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
     defineTool({
       name: "server_test",
       description:
-        "Open an SSH connection to a configured server and report reachability, the observed host key fingerprint, whether it matches the pinned key, and the login latency. Read-only. Pass pin=true to store the observed fingerprint as the server's pinned key (only when no key is pinned yet).",
+        "Check that a configured server can be reached: connects (or reuses the existing connection), reports login latency, the observed host key fingerprint and whether it matches the pinned one. Read-only. Pass pin=true to store the observed fingerprint when none is pinned yet.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         pin: { type: "boolean", description: "Store the observed host key fingerprint when none is pinned." },
       },
       output: objectOutput,
-      async execute(args, exec) {
+      async execute(args) {
         const config = getConfig();
         const server = findServer(config, args.server);
         if (server.hostKey && args.pin) {
-          throw new MultiserversError(`Server "${server.id}" already pins a host key; remove it explicitly before re-pinning.`);
+          throw new MultiserversError(
+            `Server "${server.id}" already pins a host key; clear it explicitly before re-pinning.`,
+          );
         }
         const started = Date.now();
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
-        });
-        try {
-          const probe = await execRemote(connection, "printf 'ok'", {
-            timeoutMs: 10_000,
-            signal: exec.signal,
-          });
-          const matches = server.hostKey ? server.hostKey === connection.fingerprint : true;
-          let pinned = Boolean(server.hostKey);
-          if (args.pin && !server.hostKey) {
-            const next = config.servers.map((entry) =>
-              entry.id === server.id ? { ...entry, hostKey: connection.fingerprint } : entry,
-            );
-            await writeServers(ctx, next);
-            pinned = true;
-          }
-          return {
-            server: server.id,
-            reachable: probe.code === 0,
-            latencyMs: Date.now() - started,
-            hostKeyFingerprint: connection.fingerprint,
-            hostKeyPinned: pinned,
-            hostKeyMatches: matches,
-          };
-        } finally {
-          connection.close();
+        const state = await pool.ensure(ctx, server);
+        let pinned = Boolean(server.hostKey);
+        if (args.pin && !server.hostKey) {
+          const next = config.servers.map((entry) =>
+            entry.id === server.id ? { ...entry, hostKey: state.fingerprint } : entry,
+          );
+          await writeServers(ctx, next);
+          pinned = true;
         }
+        return {
+          server: server.id,
+          reachable: state.alive,
+          latencyMs: Date.now() - started,
+          hostKeyFingerprint: state.fingerprint,
+          hostKeyPinned: pinned,
+          hostKeyMatches: !server.hostKey || server.hostKey === state.fingerprint,
+        };
       },
     }),
   );
@@ -146,7 +130,7 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
     defineTool({
       name: "server_probe",
       description:
-        "Collect a read-only capability profile of a server: OS, hostname, login user/home/shell, whether Slurm/PBS/LSF clients, tmux, rsync, python, conda, module, docker or singularity are installed, and mounted filesystems with capacity. Use this before deciding how to run a workload or where data can live.",
+        "Read-only capability profile of a server: OS, hostname, login user/home/shell, whether Slurm/PBS/LSF clients, tmux, rsync, python, conda, module, docker or singularity exist, and mounted storage. Use it before deciding how to run work or where data can live.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
       },
@@ -154,185 +138,164 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
       async execute(args, exec) {
         const config = getConfig();
         const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
+        const state = await pool.ensure(ctx, server);
+        const result = await execRemote(state.client, CAPABILITY_COMMAND, {
+          timeoutMs: 30_000,
+          signal: exec.signal,
         });
-        try {
-          const result = await execRemote(connection, CAPABILITY_COMMAND, {
-            timeoutMs: 30_000,
-            signal: exec.signal,
-          });
-          const fields: Record<string, string> = {};
-          for (const line of result.stdout.split("\n")) {
-            const index = line.indexOf("=");
-            if (index > 0) fields[line.slice(0, index).trim()] = line.slice(index + 1);
-          }
-          return {
-            server: server.id,
-            hostKeyFingerprint: connection.fingerprint,
-            platform: fields.platform ?? null,
-            hostname: fields.hostname ?? null,
-            user: fields.user ?? null,
-            home: fields.home ?? null,
-            shell: fields.shell ?? null,
-            schedulers: ["sbatch", "qsub", "bsub"].filter((name) => fields[`tool_${name}`] && fields[`tool_${name}`] !== "MISSING"),
-            tools: Object.fromEntries(
-              ["tmux", "rsync", "python3", "conda", "module", "docker", "singularity", "apptainer"].map((toolName) => {
-                const found = fields[`tool_${toolName}`];
-                return [toolName, found && found !== "MISSING" ? found : null];
-              }),
-            ),
-            storage: result.stdout
-              .split("\n")
-              .filter((line) => /^\/|^Filesystem|^\S+\s+\d+[KMGTP]?\s+\d+/.test(line))
-              .slice(0, 12),
-            rawExitCode: result.code,
-          };
-        } finally {
-          connection.close();
+        const fields: Record<string, string> = {};
+        for (const line of result.stdout.split("\n")) {
+          const index = line.indexOf("=");
+          if (index > 0) fields[line.slice(0, index).trim()] = line.slice(index + 1);
         }
+        return {
+          server: server.id,
+          platform: fields.platform ?? null,
+          hostname: fields.hostname ?? null,
+          user: fields.user ?? null,
+          home: fields.home ?? null,
+          shell: fields.shell ?? null,
+          schedulers: ["sbatch", "qsub", "bsub"].filter(
+            (name) => fields[`tool_${name}`] && fields[`tool_${name}`] !== "MISSING",
+          ),
+          tools: Object.fromEntries(
+            ["tmux", "rsync", "python3", "conda", "module", "docker", "singularity", "apptainer"].map((toolName) => {
+              const found = fields[`tool_${toolName}`];
+              return [toolName, found && found !== "MISSING" ? found : null];
+            }),
+          ),
+          storage: result.stdout
+            .split("\n")
+            .filter((line) => /^\S+\s+\d+[KMGTP]?\s+\d+/.test(line))
+            .slice(0, 12),
+        };
       },
     }),
   );
 
   register(
     defineTool({
-      name: "run",
+      name: "server_connect",
       description:
-        "Run a shell command on a configured server through the remote login shell (bash -lc) and return exit code, stdout and stderr. Bounded by a timeout; the call is cancelled when the agent aborts it. Use for inspection and short operations. For long or GPU workloads on a scheduler host, submit a job instead (sbatch/squeue), or use a background-capable follow-up slice.",
+        "Log in to a configured server now (or reuse the existing connection) so later commands do not pay connection latency. Returns the connection summary. server_test keeps the connection open as well.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
-        command: { type: "string", required: true, description: "Shell command to run. Quote paths; the plugin passes the string to bash -lc." },
-        cwd: { type: "string", description: "Absolute directory to run in." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const server = findServer(getConfig(), args.server);
+        const started = Date.now();
+        const state = await pool.ensure(ctx, server);
+        return {
+          server: server.id,
+          connected: state.alive,
+          latencyMs: Date.now() - started,
+          hostKeyFingerprint: state.fingerprint,
+          connectedAt: new Date(state.connectedAt).toISOString(),
+        };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "server_disconnect",
+      description:
+        "Log out of a server: closes every shell session and the SSH connection. Remote processes started outside the sessions keep running.",
+      parameters: {
+        server: { type: "string", required: true, description: "Server id from server_list." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const server = findServer(getConfig(), args.server);
+        await sessions.closeForServer(server.id);
+        await pool.close(server.id);
+        return { server: server.id, disconnected: true };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "server_status",
+      description:
+        "Show connection state: which servers are logged in, when they connected, idle time, and which named shell sessions exist.",
+      parameters: {},
+      output: objectOutput,
+      async execute() {
+        return { connections: pool.list(), sessions: sessions.list() };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "shell_open",
+      description:
+        "Open (or reuse) a named shell session on a server. Each session keeps its own working directory and environment, and runs commands one at a time. Pass a name to keep independent sessions (for example 'build' and 'logs'). Omitting the name uses 'main'.",
+      parameters: {
+        server: { type: "string", required: true, description: "Server id from server_list." },
+        name: { type: "string", description: "Session name; defaults to 'main'." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const config = getConfig();
+        const server = findServer(config, args.server);
+        const session = await sessions.open(ctx, config, server, sessionName(args.name));
+        return { server: server.id, session: session.name, alive: session.alive };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "shell_run",
+      description:
+        "Run a shell command inside a named session and return exit code, stdout and stderr. The session is a real login shell, so cd/exports/module loads persist for later calls in that session; commands in one session run serially. Default timeout comes from settings; a timeout restarts only that session (cwd/env are lost and stateReset is reported). Do not start interactive programs or long compute jobs here — use nohup/tmux or the scheduler.",
+      parameters: {
+        server: { type: "string", required: true, description: "Server id from server_list." },
+        command: { type: "string", required: true, description: "Shell command to run." },
+        session: { type: "string", description: "Session name; defaults to 'main'." },
         timeoutMs: { type: "number", description: "Timeout in milliseconds; defaults to the plugin's commandTimeoutMs." },
       },
       output: objectOutput,
       async execute(args, exec) {
         const config = getConfig();
-        const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
+        const result = await sessions.run(ctx, config, args.server, args.command, {
+          session: sessionName(args.session),
+          timeoutMs: args.timeoutMs ?? commandTimeout(),
+          signal: exec.signal,
         });
-        try {
-          return { server: server.id, ...(await execRemote(connection, args.command, {
-            timeoutMs: args.timeoutMs ?? COMMAND_TIMEOUT(config),
-            ...(args.cwd ? { cwd: args.cwd } : {}),
-            signal: exec.signal,
-          })) };
-        } finally {
-          connection.close();
-        }
+        return { server: args.server, session: sessionName(args.session), ...result };
       },
     }),
   );
 
   register(
     defineTool({
-      name: "ls",
-      description: "List a directory on a configured server over SFTP. Returns name, type, size, mode and modification time.",
-      parameters: {
-        server: { type: "string", required: true, description: "Server id from server_list." },
-        path: { type: "string", required: true, description: "Absolute remote directory path." },
-      },
-      output: objectOutput,
-      async execute(args) {
-        const config = getConfig();
-        const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
-        });
-        try {
-          return { server: server.id, path: args.path, entries: await listDirectory(connection, args.path) };
-        } finally {
-          connection.close();
-        }
-      },
-    }),
-  );
-
-  register(
-    defineTool({
-      name: "stat",
-      description: "Show type, size, permissions and modification time for one remote path.",
-      parameters: {
-        server: { type: "string", required: true, description: "Server id from server_list." },
-        path: { type: "string", required: true, description: "Absolute remote path." },
-      },
-      output: objectOutput,
-      async execute(args) {
-        const config = getConfig();
-        const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
-        });
-        try {
-          return { server: server.id, entry: await statPath(connection, args.path) };
-        } finally {
-          connection.close();
-        }
-      },
-    }),
-  );
-
-  register(
-    defineTool({
-      name: "mkdir",
-      description: "Create a directory on a configured server. Set recursive=true to create parents.",
-      parameters: {
-        server: { type: "string", required: true, description: "Server id from server_list." },
-        path: { type: "string", required: true, description: "Absolute remote directory path." },
-        recursive: { type: "boolean", description: "Create parent directories too." },
-      },
-      output: objectOutput,
-      async execute(args) {
-        const config = getConfig();
-        const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
-        });
-        try {
-          await makeDirectory(connection, args.path, Boolean(args.recursive));
-          return { server: server.id, path: args.path, created: true };
-        } finally {
-          connection.close();
-        }
-      },
-    }),
-  );
-
-  register(
-    defineTool({
-      name: "rm",
+      name: "shell_close",
       description:
-        "Remove one remote path. Directories require recursive=true and confirm=true; the path must be absolute. Prefer listing the parent first so you know exactly what is removed.",
+        "Close one named shell session. The SSH connection stays open until idle timeout or server_disconnect.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
-        path: { type: "string", required: true, description: "Absolute remote path." },
-        recursive: { type: "boolean", description: "Remove a directory tree." },
-        confirm: { type: "boolean", description: "Required with recursive=true; acknowledges data loss." },
+        session: { type: "string", description: "Session name; defaults to 'main'." },
       },
       output: objectOutput,
       async execute(args) {
-        if (args.recursive && args.confirm !== true) {
-          throw new MultiserversError("recursive removal requires confirm=true");
-        }
-        const config = getConfig();
-        const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
-        });
-        try {
-          await removePath(connection, args.path, Boolean(args.recursive));
-          return { server: server.id, path: args.path, removed: true };
-        } finally {
-          connection.close();
-        }
+        const closed = await sessions.close(args.server, sessionName(args.session));
+        return { server: args.server, session: sessionName(args.session), closed };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "session_list",
+      description: "List shell sessions across servers with their liveness and last activity time.",
+      parameters: {},
+      output: objectOutput,
+      async execute() {
+        return { sessions: sessions.list() };
       },
     }),
   );
@@ -341,27 +304,21 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
     defineTool({
       name: "upload",
       description:
-        "Upload one local file to a configured server over SFTP, overwriting the destination. Returns the byte count written. Large datasets belong on the server already; transfer only code, configs and small inputs.",
+        "Upload one local file to the server over SFTP. If a smaller file already exists there it resumes from that offset; an existing file with different content is refused unless overwrite=true. Verifies sha256 when the host has sha256sum. Transfer code, configs and small inputs; large datasets should already live on the server.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         localPath: { type: "string", required: true, description: "Absolute local path." },
         remotePath: { type: "string", required: true, description: "Absolute remote destination path." },
+        overwrite: { type: "boolean", description: "Replace an existing file with different content." },
       },
       output: objectOutput,
       async execute(args) {
-        const config = getConfig();
-        const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
+        const server = findServer(getConfig(), args.server);
+        const state = await pool.ensure(ctx, server);
+        const result = await uploadWithResume(state.client, args.localPath, args.remotePath, {
+          overwrite: Boolean(args.overwrite),
         });
-        try {
-          await uploadFile(connection, args.localPath, args.remotePath);
-          const entry = await statPath(connection, args.remotePath);
-          return { server: server.id, remotePath: args.remotePath, bytes: entry.size };
-        } finally {
-          connection.close();
-        }
+        return { server: server.id, ...result };
       },
     }),
   );
@@ -370,26 +327,21 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
     defineTool({
       name: "download",
       description:
-        "Download one remote file to a local path over SFTP, overwriting the destination. Use for results and small artifacts; leave large datasets on the server.",
+        "Download one remote file over SFTP. If a smaller local file exists it resumes from that offset; an existing local file with different content is refused unless overwrite=true. Verifies sha256 when available. Use for results and small artifacts; leave large datasets on the server.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         remotePath: { type: "string", required: true, description: "Absolute remote path." },
         localPath: { type: "string", required: true, description: "Absolute local destination path." },
+        overwrite: { type: "boolean", description: "Replace an existing local file with different content." },
       },
       output: objectOutput,
       async execute(args) {
-        const config = getConfig();
-        const server = findServer(config, args.server);
-        const connection = await connect(ctx, server, {
-          connectTimeoutMs: CONNECT_TIMEOUT(config),
-          expectedFingerprint: server.hostKey ?? null,
+        const server = findServer(getConfig(), args.server);
+        const state = await pool.ensure(ctx, server);
+        const result = await downloadWithResume(state.client, args.remotePath, args.localPath, {
+          overwrite: Boolean(args.overwrite),
         });
-        try {
-          await downloadFile(connection, args.remotePath, args.localPath);
-          return { server: server.id, remotePath: args.remotePath, localPath: args.localPath };
-        } finally {
-          connection.close();
-        }
+        return { server: server.id, ...result };
       },
     }),
   );
@@ -398,7 +350,7 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
     defineTool({
       name: "server_add",
       description:
-        "Register a remote server. The password, when provided, is stored in the DSH credential store (the same store provider API keys use), never in plugin configuration; only its reference name is written to the profile. Requires the Settings service. Validate reachability afterwards with server_test.",
+        "Register a remote server. The password, when provided, is stored in the DSH credential store, never in plugin configuration. Requires the Settings service. Validate with server_test afterwards.",
       parameters: {
         id: { type: "string", required: true, description: "Stable id, lowercase letters/digits/dashes." },
         host: { type: "string", required: true, description: "Hostname or IP address." },
@@ -420,12 +372,8 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
           throw new MultiserversError(`Server "${args.id}" already exists`);
         }
         const auth = (args.auth ?? "password") as "password" | "key";
-        if (auth === "password" && !args.password) {
-          throw new MultiserversError("password auth requires a password");
-        }
-        if (auth === "key" && !args.keyPath) {
-          throw new MultiserversError("key auth requires keyPath");
-        }
+        if (auth === "password" && !args.password) throw new MultiserversError("password auth requires a password");
+        if (auth === "key" && !args.keyPath) throw new MultiserversError("key auth requires keyPath");
         let passwordRef: string | undefined;
         if (auth === "password" && args.password) passwordRef = await storePassword(ctx, args.id, args.password);
         const server: ServerSpec = {
@@ -450,7 +398,7 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
     defineTool({
       name: "server_remove",
       description:
-        "Remove a configured server. By default the stored password credential is also removed; pass forgetPassword=false to keep it. Does not touch anything on the remote host.",
+        "Remove a configured server and close its connection and sessions. By default the stored password credential is removed too. Does not touch anything on the remote host.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         forgetPassword: { type: "boolean", description: "Also remove the stored password credential; defaults to true." },
@@ -459,6 +407,8 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
       async execute(args) {
         const config = getConfig();
         const server = findServer(config, args.server);
+        await sessions.closeForServer(server.id);
+        await pool.close(server.id);
         const next = config.servers.filter((entry) => entry.id !== server.id);
         await writeServers(ctx, next);
         if (server.auth === "password" && args.forgetPassword !== false) {
@@ -472,18 +422,3 @@ export function registerTools(ctx: Context, getConfig: () => Config): Array<() =
 
   return disposers;
 }
-
-/** Store a password in the DSH credential store (same place provider API keys live). */
-export async function storePassword(ctx: Context, serverId: string, password: string): Promise<string> {
-  const refName = passwordRefFor(serverId);
-  await ctx.credentials.set(credentialRef(refName), password);
-  return refName;
-}
-
-export async function checkPasswordConfigured(ctx: Context, server: ServerSpec): Promise<boolean> {
-  const refName = server.passwordRef ?? passwordRefFor(server.id);
-  const info = await ctx.credentials.describe(credentialRef(refName));
-  return Boolean(info?.configured);
-}
-
-export { resolvePassword, shellQuote };

@@ -23,6 +23,12 @@ export interface Config {
   servers: ServerSpec[];
   connectTimeoutMs?: number;
   commandTimeoutMs?: number;
+  /** TCP keepalive probe interval; 0 disables. */
+  keepaliveIntervalMs?: number;
+  /** Idle connection reaping; 0 keeps connections open until explicit logout. */
+  idleTimeoutMs?: number;
+  /** Named sessions allowed per server. */
+  maxSessionsPerServer?: number;
 }
 
 export interface ExecResult {
