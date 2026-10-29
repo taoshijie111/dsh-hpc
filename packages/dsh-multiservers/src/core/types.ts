@@ -18,9 +18,9 @@ export interface ServerSpec {
   /** Credential reference holding the private key passphrase. */
   keyPassphraseRef?: string;
   /** Scheduling backend: auto detects and caches, bare and slurm force one. */
-  kind?: "auto" | "bare" | "slurm";
+  kind?: "auto" | "bare" | "slurm" | "pbs" | "lsf";
   /** Cached result of the auto detection. */
-  resolvedKind?: "bare" | "slurm";
+  resolvedKind?: "bare" | "slurm" | "pbs" | "lsf";
   /** Default Slurm resources for jobs submitted to this server. */
   schedulerDefaults?: SchedulerDefaults;
   /** Remote directory for job scripts and logs; ~ expands to the login HOME. */

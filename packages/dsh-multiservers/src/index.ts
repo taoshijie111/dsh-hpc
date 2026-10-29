@@ -37,10 +37,10 @@ export const Config = Schema.object({
       ),
       keyPath: Schema.string().description("Absolute local private key path for key auth."),
       hostKey: Schema.string().description("Pinned host key fingerprint, e.g. SHA256:...; empty pins on first test."),
-      kind: Schema.union(["auto", "bare", "slurm"])
+      kind: Schema.union(["auto", "bare", "slurm", "pbs", "lsf"])
         .default("auto")
         .description("Scheduling backend: auto detects and caches, bare or slurm force one."),
-      resolvedKind: Schema.union(["bare", "slurm"]).description("Cached result of the automatic detection."),
+      resolvedKind: Schema.union(["bare", "slurm", "pbs", "lsf"]).description("Cached result of the automatic detection."),
       schedulerDefaults: Schema.object({
         partition: Schema.string(),
         account: Schema.string(),

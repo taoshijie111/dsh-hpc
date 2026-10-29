@@ -17,6 +17,12 @@ function buildScript(): string {
     "  echo __SINFO__; sinfo -h -N -o '%P|%t|%m' 2>/dev/null | head -400",
     "  echo __NODES__; scontrol show node -o 2>/dev/null | head -400",
     "  echo __QUEUE__; squeue -h -o '%T' 2>/dev/null | sort | uniq -c",
+    "elif command -v qsub >/dev/null 2>&1 || command -v qstat >/dev/null 2>&1; then",
+    "  echo __MODE__queue",
+    "  echo __QUEUESYS__pbs",
+    "elif command -v bsub >/dev/null 2>&1 || command -v bjobs >/dev/null 2>&1; then",
+    "  echo __MODE__queue",
+    "  echo __QUEUESYS__lsf",
     "else",
     "  echo __MODE__bare",
     "  echo __LOAD__; uptime",
@@ -206,6 +212,36 @@ function parseQueue(raw: string): { running: number; pending: number; other: num
   return result;
 }
 
+const DETECT_SCRIPT = [
+  "if command -v scontrol >/dev/null 2>&1 || (command -v sbatch >/dev/null 2>&1 && command -v squeue >/dev/null 2>&1); then echo slurm",
+  "elif command -v qsub >/dev/null 2>&1 || command -v qstat >/dev/null 2>&1; then echo pbs",
+  "elif command -v bsub >/dev/null 2>&1 || command -v bjobs >/dev/null 2>&1; then echo lsf",
+  "else echo bare; fi",
+].join(String.fromCharCode(10));
+
+type SettingsLike = {
+  describe(): Array<{ ns: string; revision: number; value?: unknown }>;
+  update(ns: string, patch: object, expectedRevision?: number): Promise<void>;
+};
+
+/** Remember the detected kind so the server card stops showing "auto". */
+async function persistResolvedKind(
+  serverId: string,
+  kind: "bare" | "slurm" | "pbs" | "lsf",
+  current: Config,
+): Promise<boolean> {
+  const settings = ctxForApi?.get("settings") as SettingsLike | undefined;
+  if (!settings) return false;
+  try {
+    const own = settings.describe().find((entry) => entry.ns === "multiservers");
+    const servers = current.servers.map((server) => (server.id === serverId ? { ...server, resolvedKind: kind } : server));
+    await settings.update("multiservers", { servers }, own?.revision);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function percentOf(part: number, whole: number): number {
   return whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
 }
@@ -235,6 +271,8 @@ export function registerApi(
             username: server.username,
             auth: server.auth,
             kind: server.kind === "auto" || !server.kind ? server.resolvedKind ?? "auto" : server.kind,
+            configuredKind: server.kind ?? "auto",
+            resolvedKind: server.resolvedKind ?? null,
             hostKeyPinned: Boolean(server.hostKey),
             connected: Boolean(state),
             idleSinceMs: state?.idleSinceMs ?? null,
@@ -270,8 +308,27 @@ export function registerApi(
             cpu: parseCpu(`${section(raw, "LOGINLOAD")}\n${section(raw, "LOGINCPU")}`, nproc),
             memory: parseMemory(section(raw, "LOGINMEM")),
           };
-          const mode = section(raw, "MODE") === "slurm" || server.kind === "slurm" ? "slurm" : "bare";
+          const modeRaw = section(raw, "MODE");
+          const mode = modeRaw === "slurm" || server.kind === "slurm" ? "slurm" : modeRaw === "queue" ? "queue" : "bare";
           const base = { server: server.id, sampledAt: new Date().toISOString(), elapsedMs: Date.now() - started, mode, login };
+
+          if (server.kind === "auto" || !server.kind) {
+            const detected = mode === "slurm" ? "slurm" : mode === "queue" ? (section(raw, "QUEUESYS") === "lsf" ? "lsf" : "pbs") : "bare";
+            const persisted = await persistResolvedKind(server.id, detected, getConfig());
+            if (persisted) base.mode = detected;
+          }
+
+          if (mode === "queue") {
+            json(res, 200, {
+              ...base,
+              kind: "queue",
+              queueSystem: section(raw, "QUEUESYS") || "pbs",
+              cpu: login.cpu,
+              memory: login.memory,
+              note: "该服务器使用 PBS/LSF 队列系统，当前仅提供登录节点资源；集群视图与作业工具暂未支持。",
+            });
+            return;
+          }
 
           if (mode === "slurm") {
             const nodes = parseNodes(section(raw, "NODES"));
@@ -326,5 +383,46 @@ export function registerApi(
     },
   });
 
-  return [status, usage];
+  const detect = webServer.register({
+    kind: "exact",
+    path: "/api/multiservers/detect",
+    handler: async (req, res) => {
+      if (!allowed(req)) return json(res, 403, { error: "forbidden" });
+      const url = new URL(req.url ?? "/", "http://local");
+      const serverId = url.searchParams.get("server") ?? "";
+      try {
+        const config = getConfig();
+        const server = findServer(config, serverId);
+        if (server.kind && server.kind !== "auto") {
+          json(res, 200, { server: server.id, kind: server.kind, pinned: true, persisted: false });
+          return;
+        }
+        const connection = await connect(ctxForApi, server, {
+          connectTimeoutMs: 15_000,
+          keepaliveIntervalMs: 0,
+          expectedFingerprint: server.hostKey ?? null,
+        });
+        try {
+          const result = await execRemote(connection.client, DETECT_SCRIPT, { timeoutMs: 20_000 });
+          const kind = (["slurm", "pbs", "lsf", "bare"].includes(result.stdout.trim()) ? result.stdout.trim() : "bare") as
+            | "bare"
+            | "slurm"
+            | "pbs"
+            | "lsf";
+          const persisted = await persistResolvedKind(server.id, kind, config);
+          json(res, 200, { server: server.id, kind, pinned: false, persisted });
+        } finally {
+          try {
+            connection.client.end();
+          } catch {
+            /* already closed */
+          }
+        }
+      } catch (error) {
+        json(res, 502, { error: error instanceof MultiserversError ? error.message : String(error) });
+      }
+    },
+  });
+
+  return [status, usage, detect];
 }

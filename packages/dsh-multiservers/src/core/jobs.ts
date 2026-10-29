@@ -8,6 +8,7 @@ import { execRemote } from "./ssh.js";
 import { MultiserversError, shellQuote, type Config, type ServerSpec } from "./types.js";
 
 export type JobBackend = "bare" | "slurm";
+export type ResolvedBackend = "bare" | "slurm" | "pbs" | "lsf";
 export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled" | "lost" | "unknown";
 
 export type JobResources = {
@@ -97,17 +98,29 @@ export async function resolveBackend(
   ctx: Context,
   pool: ConnectionPool,
   server: ServerSpec,
-  persist?: (backend: JobBackend) => Promise<void>,
+  persist?: (backend: ResolvedBackend) => Promise<void>,
 ): Promise<JobBackend> {
   if (server.kind === "bare" || server.kind === "slurm") return server.kind;
   if (server.resolvedKind === "bare" || server.resolvedKind === "slurm") return server.resolvedKind;
   const state = await pool.ensure(ctx, server);
   const result = await execRemote(
     state.client,
-    "command -v sbatch >/dev/null 2>&1 && command -v squeue >/dev/null 2>&1 && echo slurm || echo bare",
+    [
+      "if command -v scontrol >/dev/null 2>&1 || (command -v sbatch >/dev/null 2>&1 && command -v squeue >/dev/null 2>&1); then echo slurm",
+      "elif command -v qsub >/dev/null 2>&1 || command -v qstat >/dev/null 2>&1; then echo pbs",
+      "elif command -v bsub >/dev/null 2>&1 || command -v bjobs >/dev/null 2>&1; then echo lsf",
+      "else echo bare; fi",
+    ].join(String.fromCharCode(10)),
     { timeoutMs: 15_000 },
   );
-  const backend: JobBackend = result.stdout.trim() === "slurm" ? "slurm" : "bare";
+  const detected = result.stdout.trim();
+  if (detected === "pbs" || detected === "lsf") {
+    await persist?.(detected);
+    throw new MultiserversError(
+      `Server "${server.id}" runs ${detected.toUpperCase()}; job submission currently supports Slurm and bare metal only.`,
+    );
+  }
+  const backend: JobBackend = detected === "slurm" ? "slurm" : "bare";
   await persist?.(backend);
   return backend;
 }
@@ -186,7 +199,7 @@ export async function submitJob(
   pool: ConnectionPool,
   server: ServerSpec,
   spec: JobSpec,
-  persistBackend?: (backend: JobBackend) => Promise<void>,
+  persistBackend?: (backend: ResolvedBackend) => Promise<void>,
 ): Promise<JobRecord> {
   const command = (spec.script ? `bash ${shellQuote("<script>")}` : spec.command) ?? "";
   if (!spec.script && !spec.command) throw new MultiserversError("job_submit needs command or script");
@@ -264,7 +277,7 @@ async function refreshBare(ctx: Context, pool: ConnectionPool, server: ServerSpe
       `if [ -f ${shellQuote(record.exitPath!)} ]; then echo "EXIT:$(cat ${shellQuote(record.exitPath!)})";`,
       `elif kill -0 ${record.pid ?? 0} 2>/dev/null; then echo ALIVE:$(awk '{print $22}' /proc/${record.pid ?? 0}/stat 2>/dev/null);`,
       "else echo GONE; fi",
-    ].join(" "),
+    ].join(String.fromCharCode(10)),
     { timeoutMs: 15_000 },
   );
   const line = probe.stdout.trim();

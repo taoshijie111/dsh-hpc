@@ -115,7 +115,7 @@ export function registerTools(
           description: "Credential reference holding the key passphrase (key auth).",
         },
         hostKey: { type: "string", description: "Pinned host key fingerprint, e.g. SHA256:..." },
-        kind: { type: "string", enum: ["auto", "bare", "slurm"], description: "Scheduling backend; defaults to auto detection." },
+        kind: { type: "string", enum: ["auto", "bare", "slurm", "pbs", "lsf"], description: "Scheduling backend; defaults to auto detection." },
         partition: { type: "string", description: "Default Slurm partition for jobs." },
         account: { type: "string", description: "Default Slurm account." },
         qos: { type: "string", description: "Default Slurm QOS." },

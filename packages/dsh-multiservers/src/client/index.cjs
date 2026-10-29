@@ -135,6 +135,7 @@ window.__ModuleLoader__.load({
       keyPath: "",
       hostKey: "",
       label: "",
+      kind: "auto",
     });
 
     function Field(props) {
@@ -263,6 +264,7 @@ window.__ModuleLoader__.load({
 
     function UsageGauges(props) {
       if (props.sample.kind === "slurm") return h(ClusterUsage, { sample: props.sample });
+      if (props.sample.kind === "queue") return h(QueueUsage, { sample: props.sample });
       const sample = props.sample;
       const cpu = sample.cpu || {};
       const memory = sample.memory || null;
@@ -338,11 +340,54 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function QueueUsage(props) {
+      const sample = props.sample;
+      const cpu = sample.cpu || {};
+      const memory = sample.memory || null;
+      const load = Array.isArray(cpu.load) ? cpu.load.map((value) => value.toFixed(2)).join(" / ") : "—";
+      return h(
+        "div",
+        null,
+        h("div", { style: css.note, marginBottom: 8 }, sample.note || "该服务器使用队列系统。"),
+        h(
+          "div",
+          { style: css.statsGrid },
+          h(Stat, {
+            label: "登录节点 CPU",
+            value: `${cpu.usagePercent == null ? "—" : `${cpu.usagePercent}%`} · ${cpu.cores || "?"} 核 · load ${load}`,
+            percent: cpu.usagePercent,
+          }),
+          memory ? h(Stat, { label: "登录节点内存", value: `${memory.percent}% · ${gb(memory.usedMb)} / ${gb(memory.totalMb)}`, percent: memory.percent }) : null,
+        ),
+        h("div", { style: css.footer },
+          h("span", null, `系统 ${String(sample.queueSystem || sample.mode || "").toUpperCase()}`),
+          h("span", { style: css.spacer }),
+          h("span", null, `采样 ${new Date(sample.sampledAt).toLocaleTimeString()} · ${sample.elapsedMs} ms · 已自动断开`)),
+      );
+    }
+
     function StatusPanel() {
       const [data, setData] = React.useState(null);
       const [error, setError] = React.useState("");
       const [busy, setBusy] = React.useState(false);
       const [samples, setSamples] = React.useState({});
+      const [detecting, setDetecting] = React.useState({});
+
+      const detect = async (id) => {
+        setDetecting((current) => ({ ...current, [id]: true }));
+        try {
+          const response = await fetch(`/api/multiservers/detect?server=${encodeURIComponent(id)}`, {
+            headers: { "x-multiservers-request": "1" },
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+          await load();
+        } catch (failure) {
+          setError(`检测失败：${(failure && failure.message) || failure}`);
+        } finally {
+          setDetecting((current) => ({ ...current, [id]: false }));
+        }
+      };
 
       const load = React.useCallback(async () => {
         setBusy(true);
@@ -403,9 +448,28 @@ window.__ModuleLoader__.load({
                   h("span", { style: server.connected ? css.dotOnline : css.dotOffline }),
                   h("span", { style: css.name }, server.label || server.id),
                   h("span", { style: css.sub }, `${server.username}@${server.host}:${server.port}`),
-                  h("span", { style: css.badge }, server.kind === "slurm" ? "Slurm" : server.kind === "bare" ? "裸金属" : "自动检测"),
+                  h(
+                    "span",
+                    { style: css.badge },
+                    server.kind === "slurm"
+                      ? "Slurm 集群"
+                      : server.kind === "bare"
+                        ? "裸金属"
+                        : server.kind === "pbs"
+                          ? "PBS 队列"
+                          : server.kind === "lsf"
+                            ? "LSF 队列"
+                            : "类型未检测",
+                  ),
                   server.hostKeyPinned ? h("span", { style: css.badge }, "指纹已固定") : null,
                   h("span", { style: css.spacer }),
+                  server.kind === "auto" || !server.kind
+                    ? h(
+                        "button",
+                        { type: "button", style: css.button, disabled: detecting[server.id] === true, onClick: () => detect(server.id) },
+                        detecting[server.id] ? "检测中…" : "检测类型",
+                      )
+                    : null,
                   h(
                     "button",
                     { type: "button", style: css.button, disabled: state.loading === true, onClick: () => sample(server.id) },
@@ -585,6 +649,7 @@ window.__ModuleLoader__.load({
           password: "",
           keyPath: server.keyPath || "",
           hostKey: server.hostKey || "",
+          kind: server.kind || "auto",
         });
         setEditing(server.id);
       };
@@ -620,8 +685,8 @@ window.__ModuleLoader__.load({
         };
         if (draft.label.trim()) entry.label = draft.label.trim();
         if (draft.hostKey.trim()) entry.hostKey = draft.hostKey.trim();
-        if (previous && previous.kind) entry.kind = previous.kind;
-        if (previous && previous.resolvedKind) entry.resolvedKind = previous.resolvedKind;
+        entry.kind = draft.kind || "auto";
+        if (entry.kind === "auto" && previous && previous.resolvedKind) entry.resolvedKind = previous.resolvedKind;
         if (previous && previous.schedulerDefaults) entry.schedulerDefaults = previous.schedulerDefaults;
         if (previous && previous.jobRoot) entry.jobRoot = previous.jobRoot;
 
@@ -727,6 +792,16 @@ window.__ModuleLoader__.load({
                   style: css.input, value: draft.auth,
                   onChange: (event) => update({ auth: event.target.value }),
                 }, h("option", { value: "password" }, "密码"), h("option", { value: "key" }, "私钥"))),
+              h(Field, { label: "类型（调度系统）", wide: true },
+                h("select", {
+                  style: css.input, value: draft.kind,
+                  onChange: (event) => update({ kind: event.target.value }),
+                },
+                  h("option", { value: "auto" }, "自动检测"),
+                  h("option", { value: "bare" }, "裸金属（无队列）"),
+                  h("option", { value: "slurm" }, "Slurm"),
+                  h("option", { value: "pbs" }, "PBS（作业工具暂不支持）"),
+                  h("option", { value: "lsf" }, "LSF（作业工具暂不支持）"))),
               draft.auth === "key"
                 ? h(Field, { label: "私钥路径", wide: true },
                     h("input", {
