@@ -1,9 +1,9 @@
 {
-  "name": "multiservers",
+  "name": "dsh-hpc-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "DeepSeek Harness plugin for remote server management.",
+  "description": "Workspace for the dsh-hpc DeepSeek Harness plugin.",
   "engines": {
     "node": ">=24 <25"
   },
@@ -11,9 +11,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace dsh-multiservers",
-    "typecheck": "npm run typecheck --workspace dsh-multiservers",
-    "test": "npm run test --workspace dsh-multiservers",
+    "build": "npm run build --workspace dsh-hpc",
+    "typecheck": "npm run typecheck --workspace dsh-hpc",
+    "test": "npm run test --workspace dsh-hpc",
     "probe:ssh": "node scripts/dev/ssh-probe.mjs"
-  }
+  },
+  "license": "MIT"
 }

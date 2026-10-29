@@ -12,7 +12,7 @@ import {
 import { dirname, join, posix } from "node:path";
 import type { Client, SFTPWrapper } from "ssh2";
 import { execRemote } from "./ssh.js";
-import { MultiserversError, shellQuote } from "./types.js";
+import { HpcError, shellQuote } from "./types.js";
 
 export type TransferResult = {
   path: string;
@@ -148,7 +148,7 @@ async function remoteSha256(client: Client, path: string): Promise<string | null
 }
 
 function shouldAbort(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new MultiserversError("Transfer cancelled");
+  if (signal?.aborted) throw new HpcError("Transfer cancelled");
 }
 
 async function uploadFile(
@@ -165,12 +165,12 @@ async function uploadFile(
     const existing = await remoteSha256(client, remotePath);
     if (existing === localSha) return { bytes: 0, resumed: false, skipped: true, sha256: localSha, verified: true };
     if (!options.overwrite) {
-      throw new MultiserversError(
+      throw new HpcError(
         `Remote file "${remotePath}" already exists with different content. Pass overwrite=true to replace it.`,
       );
     }
   } else if (finalSize !== null && finalSize > localSize) {
-    throw new MultiserversError(`Remote file "${remotePath}" is larger than the local file; refusing to truncate.`);
+    throw new HpcError(`Remote file "${remotePath}" is larger than the local file; refusing to truncate.`);
   }
 
   const partPath = `${remotePath}.part`;
@@ -217,7 +217,7 @@ async function uploadFile(
   const partSha = await remoteSha256(client, partPath);
   if (partSha !== null && partSha !== localSha) {
     await unlink(sftp, partPath);
-    throw new MultiserversError(`Upload checksum mismatch for ${remotePath}; the staged file was discarded.`);
+    throw new HpcError(`Upload checksum mismatch for ${remotePath}; the staged file was discarded.`);
   }
   await unlink(sftp, remotePath);
   await rename(sftp, partPath, remotePath);
@@ -270,7 +270,7 @@ export async function uploadWithResume(
   remotePath: string,
   options: TransferOptions,
 ): Promise<TransferResult> {
-  if (!existsSync(localPath)) throw new MultiserversError(`Local path not found: ${localPath}`);
+  if (!existsSync(localPath)) throw new HpcError(`Local path not found: ${localPath}`);
   return withSftp(client, async (sftp) => {
     if (!statSync(localPath).isDirectory()) {
       // A single file may target a directory that does not exist yet.
@@ -316,7 +316,7 @@ async function downloadFile(
   options: TransferOptions,
 ): Promise<{ bytes: number; resumed: boolean; skipped: boolean; sha256: string | null; verified: boolean }> {
   const remoteSize = await statSize(sftp, remotePath);
-  if (remoteSize === null) throw new MultiserversError(`Remote file not found: ${remotePath}`);
+  if (remoteSize === null) throw new HpcError(`Remote file not found: ${remotePath}`);
   const remoteSha = await remoteSha256(client, remotePath);
   const localSize = existsSync(localPath) ? statSync(localPath).size : null;
   if (localSize === remoteSize && remoteSha !== null) {
@@ -325,7 +325,7 @@ async function downloadFile(
       return { bytes: 0, resumed: false, skipped: true, sha256: remoteSha, verified: true };
     }
     if (!options.overwrite) {
-      throw new MultiserversError(`Local file "${localPath}" differs from the remote file. Pass overwrite=true.`);
+      throw new HpcError(`Local file "${localPath}" differs from the remote file. Pass overwrite=true.`);
     }
   }
 
@@ -361,14 +361,14 @@ async function downloadFile(
     options.signal?.addEventListener("abort", () => {
       input.destroy();
       out.destroy();
-      reject(new MultiserversError("Transfer cancelled"));
+      reject(new HpcError("Transfer cancelled"));
     });
   });
 
   const partSha = await digestFile(partPath);
   if (remoteSha !== null && partSha !== remoteSha) {
     unlinkSync(partPath);
-    throw new MultiserversError(`Download checksum mismatch for ${remotePath}; the staged file was discarded.`);
+    throw new HpcError(`Download checksum mismatch for ${remotePath}; the staged file was discarded.`);
   }
   if (existsSync(localPath)) unlinkSync(localPath);
   renameSync(partPath, localPath);

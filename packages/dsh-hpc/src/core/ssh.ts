@@ -3,7 +3,7 @@ import { Client, type ConnectConfig } from "ssh2";
 import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
-import { MultiserversError, shellQuote, type ExecResult, type ServerSpec } from "./types.js";
+import { HpcError, shellQuote, type ExecResult, type ServerSpec } from "./types.js";
 
 /** Credential reference holding a server password (never stored in config). */
 export function passwordRefFor(id: string): string {
@@ -15,7 +15,7 @@ export async function resolvePassword(ctx: Context, server: ServerSpec): Promise
   const refName = server.passwordRef ?? passwordRefFor(server.id);
   const hit = await ctx.credentials.resolve(credentialRef(refName));
   if (!hit || !hit.value) {
-    throw new MultiserversError(
+    throw new HpcError(
       `No password stored for server "${server.id}". Set credential ${refName} in the DSH credential store.`,
     );
   }
@@ -63,11 +63,11 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
     connectConfig.password = await resolvePassword(ctx, server);
     interactiveSecret = connectConfig.password;
   } else {
-    if (!server.keyPath) throw new MultiserversError(`Server "${server.id}" uses key auth but has no keyPath`);
+    if (!server.keyPath) throw new HpcError(`Server "${server.id}" uses key auth but has no keyPath`);
     try {
       connectConfig.privateKey = await readFile(server.keyPath);
     } catch (error) {
-      throw new MultiserversError(
+      throw new HpcError(
         `Cannot read private key for "${server.id}" at ${server.keyPath}: ${(error as Error).message}`,
       );
     }
@@ -89,7 +89,7 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
     const onError = (error: Error) => {
       client.removeListener("ready", onReady);
       reject(
-        new MultiserversError(
+        new HpcError(
           `Connection to "${server.id}" (${server.host}:${server.port ?? 22}) failed: ${error.message}`,
         ),
       );
@@ -154,7 +154,7 @@ export function execRemote(
       if (error) {
         clearTimeout(timer);
         options.signal?.removeEventListener("abort", onAbort);
-        reject(new MultiserversError(`Remote command failed to start: ${error.message}`));
+        reject(new HpcError(`Remote command failed to start: ${error.message}`));
         return;
       }
       channel = stream;
@@ -170,7 +170,7 @@ export function execRemote(
       stream.on("error", (streamError: Error) => {
         clearTimeout(timer);
         options.signal?.removeEventListener("abort", onAbort);
-        reject(new MultiserversError(`Remote command stream failed: ${streamError.message}`));
+        reject(new HpcError(`Remote command stream failed: ${streamError.message}`));
       });
     });
   });

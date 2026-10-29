@@ -1,4 +1,4 @@
-# 产品需求 v1.9 — DSH 服务器管理插件（`dsh-multiservers`）
+# 产品需求 v1.9 — DSH 服务器管理插件（`dsh-hpc`）
 
 | 项 | 内容 |
 | --- | --- |
@@ -177,7 +177,7 @@
 | 项 | 结果 |
 | --- | --- |
 | 决策 | 斜杠命令的 host 结果在当前 DSH 版本不作为第三方节点渲染，改为人人可用的设置页面板；`/servers`、`/usage` 已移除 |
-| Host API | `GET /api/multiservers/status`（配置 + 连接/会话/转发）、`GET /api/multiservers/usage?server=<id>`（负载/内存/CPU/GPU/磁盘/作业）；要求同源头 `x-multiservers-request: 1` |
+| Host API | `GET /api/hpc/status`（配置 + 连接/会话/转发）、`GET /api/hpc/usage?server=<id>`（负载/内存/CPU/GPU/磁盘/作业）；要求同源头 `x-hpc-request: 1` |
 | 设置页 | 「状态」区：在线状态、会话、转发、刷新；每台服务器「资源占用」按需采样并内联渲染 |
 | 验证 | status/usage 接口实测返回正确 JSON；集成测试 19/19 |
 
@@ -188,7 +188,7 @@
 | --- | --- |
 | 服务器类型 | `kind: auto\|bare\|slurm`（默认 auto）；首次提交探测 `sbatch+squeue` 并缓存到 `resolvedKind`，可手动覆盖 |
 | 默认资源 | `schedulerDefaults`（partition/account/qos/time/cpus/memory/gpus）+ 任务级覆盖 |
-| 账本 | `$DSH_HOME/multiservers/jobs/<id>.json`，脚本与日志在远端 `jobRoot`（默认 `~/.multiservers/jobs`） |
+| 账本 | `$DSH_HOME/hpc/jobs/<id>.json`，脚本与日志在远端 `jobRoot`（默认 `~/.hpc/jobs`） |
 | 裸金属后端 | 脚本落盘 + `setsid nohup` 启动；pid 文件 + `/proc/<pid>/stat` 启动时间防复用；退出码文件判定终态 |
 | Slurm 后端 | 生成 `#SBATCH` 脚本 + `sbatch --parsable`；`squeue` 查运行态、`sacct` 查终态，记账延迟返回 `unknown`；`scancel` 取消 |
 | 工具 | `job_submit`（立即返回 jobId）、`job_status`、`job_logs`（offset/截断）、`job_cancel`；工具总数 14 |
@@ -267,7 +267,7 @@
 | 失败策略 | `continueOnError` 默认 true：单项失败继续，摘要含每项结果与错误；false 时遇到首个失败即停 |
 | 无后台服务时 | 自动退化为同步执行并返回完整摘要（测试环境可用） |
 | 目录条目 | 目录递归传输；单文件上传自动 `mkdir -p` 远端父目录（此前缺失会导致 "No such file"） |
-| 实测 | 前台队列 9/9（3 文件+目录+新建嵌套目录、失败继续/停止、非法 JSON）；headless 真实后台队列：`mss-transfer-11850a8c69f342f6`，3 项 3 文件 failed=0，完成通知送达 |
+| 实测 | 前台队列 9/9（3 文件+目录+新建嵌套目录、失败继续/停止、非法 JSON）；headless 真实后台队列：`hpc-transfer-11850a8c69f342f6`，3 项 3 文件 failed=0，完成通知送达 |
 
 ### 9.10 传输父目录语义（v1.9.4）
 

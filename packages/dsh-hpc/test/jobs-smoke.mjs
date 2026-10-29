@@ -9,10 +9,16 @@ import { readFileSync, unlinkSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as plugin from "../lib/index.js";
+const __need = ["HPC_TEST_HOST_A", "HPC_TEST_USER", "HPC_TEST_PASSWORD_A", "HPC_TEST_HOST_B", "HPC_TEST_PASSWORD_B"];
+if (__need.some((key) => !process.env[key])) {
+  console.log(`SKIP: set ${__need.join(", ")} to run integration tests`);
+  process.exit(0);
+}
+
 
 const jzId = process.env.MSS_JZ_ID ?? "jz";
 const bareId = process.env.MSS_BARE_ID ?? "wxj-94";
-const user = process.env.MSS_USER ?? "taoshijie";
+const user = process.env.MSS_USER ?? (process.env.HPC_TEST_USER ?? "");
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");
@@ -45,7 +51,7 @@ const killedWatches = [];
 const fakeJobs = {
   start(spec) {
     watched.push(spec);
-    const job = { id: `mss-job-${watched.length}`, append() {}, updateProgress() {} };
+    const job = { id: `hpc-job-${watched.length}`, append() {}, updateProgress() {} };
     const hooks = spec.run(job);
     hooks.done.catch(() => undefined);
     return job.id;
@@ -80,8 +86,8 @@ const ctx = {
 
 const config = {
   servers: [
-    { id: jzId, host: "114.214.255.60", port: 22, username: user, auth: "password", passwordRef: "MSS_JZ_PASSWORD", kind: "slurm" },
-    { id: bareId, host: "114.214.255.94", port: 22, username: user, auth: "password", passwordRef: "MSS_WXJ_94_PASSWORD", kind: "bare" },
+    { id: jzId, host: (process.env.HPC_TEST_HOST_A ?? ""), port: 22, username: user, auth: "password", passwordRef: "HPC_TEST_PASSWORD_A", kind: "slurm" },
+    { id: bareId, host: (process.env.HPC_TEST_HOST_B ?? ""), port: 22, username: user, auth: "password", passwordRef: "HPC_TEST_PASSWORD_B", kind: "bare" },
   ],
   connectTimeoutMs: 20000,
   commandTimeoutMs: 120000,
@@ -128,7 +134,7 @@ try {
   const full = await call("job_logs", { jobId: bare.jobId });
   check("bare log has the tail", full.text.includes("bye-bare"));
 
-  check("job_submit registers a local watcher", bare.watching === true && watched.length >= 1 && String(bare.watchJobId).startsWith("mss-job-"), `watch=${bare.watchJobId}`);
+  check("job_submit registers a local watcher", bare.watching === true && watched.length >= 1 && String(bare.watchJobId).startsWith("hpc-job-"), `watch=${bare.watchJobId}`);
 
   const waited = await call("job_wait", { jobId: bare.jobId, timeoutMs: 15000 });
   check("job_wait returns the terminal state", waited.state === "completed" && waited.exitCode === 0 && waited.timedOut === false);
@@ -164,7 +170,7 @@ try {
   console.error(error && error.stack); check("run completed without throwing", false, error?.message ?? String(error));
 } finally {
   for (const id of cleanup) {
-    const path = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "multiservers", "jobs", `${id}.json`);
+    const path = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "hpc", "jobs", `${id}.json`);
     try {
       if (existsSync(path)) unlinkSync(path);
     } catch {

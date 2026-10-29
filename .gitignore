@@ -6,7 +6,7 @@ dist/
 *.tsbuildinfo
 
 # local runtime data (never commit credentials, caches or project state)
-.multiservers/
+.hpc/
 *.log
 
 # OS noise

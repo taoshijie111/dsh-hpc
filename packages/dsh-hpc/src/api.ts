@@ -3,7 +3,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { ConnectionPool } from "./core/pool.js";
 import type { SessionRegistry } from "./core/session.js";
 import { connect, execRemote } from "./core/ssh.js";
-import { findServer, MultiserversError, type Config } from "./core/types.js";
+import { findServer, HpcError, type Config } from "./core/types.js";
 
 /**
  * Two sampling modes:
@@ -63,7 +63,7 @@ function json(res: ServerResponse, status: number, value: unknown): void {
 }
 
 function allowed(req: IncomingMessage): boolean {
-  return req.method === "GET" && req.headers["x-multiservers-request"] === "1";
+  return req.method === "GET" && req.headers["x-hpc-request"] === "1";
 }
 
 function section(raw: string, name: string): string {
@@ -233,9 +233,9 @@ async function persistResolvedKind(
   const settings = ctxForApi?.get("settings") as SettingsLike | undefined;
   if (!settings) return false;
   try {
-    const own = settings.describe().find((entry) => entry.ns === "multiservers");
+    const own = settings.describe().find((entry) => entry.ns === "hpc");
     const servers = current.servers.map((server) => (server.id === serverId ? { ...server, resolvedKind: kind } : server));
-    await settings.update("multiservers", { servers }, own?.revision);
+    await settings.update("hpc", { servers }, own?.revision);
     return true;
   } catch {
     return false;
@@ -255,7 +255,7 @@ export function registerApi(
 ): Array<() => void> {
   const status = webServer.register({
     kind: "exact",
-    path: "/api/multiservers/status",
+    path: "/api/hpc/status",
     handler: (req, res) => {
       if (!allowed(req)) return json(res, 403, { error: "forbidden" });
       const config = getConfig();
@@ -286,7 +286,7 @@ export function registerApi(
 
   const usage = webServer.register({
     kind: "exact",
-    path: "/api/multiservers/usage",
+    path: "/api/hpc/usage",
     handler: async (req, res) => {
       if (!allowed(req)) return json(res, 403, { error: "forbidden" });
       const url = new URL(req.url ?? "/", "http://local");
@@ -378,14 +378,14 @@ export function registerApi(
           }
         }
       } catch (error) {
-        json(res, 502, { error: error instanceof MultiserversError ? error.message : String(error) });
+        json(res, 502, { error: error instanceof HpcError ? error.message : String(error) });
       }
     },
   });
 
   const detect = webServer.register({
     kind: "exact",
-    path: "/api/multiservers/detect",
+    path: "/api/hpc/detect",
     handler: async (req, res) => {
       if (!allowed(req)) return json(res, 403, { error: "forbidden" });
       const url = new URL(req.url ?? "/", "http://local");
@@ -419,7 +419,7 @@ export function registerApi(
           }
         }
       } catch (error) {
-        json(res, 502, { error: error instanceof MultiserversError ? error.message : String(error) });
+        json(res, 502, { error: error instanceof HpcError ? error.message : String(error) });
       }
     },
   });

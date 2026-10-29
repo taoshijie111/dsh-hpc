@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ConnectionPool } from "./pool.js";
 import { execRemote } from "./ssh.js";
-import { MultiserversError, shellQuote, type Config, type ServerSpec } from "./types.js";
+import { HpcError, shellQuote, type Config, type ServerSpec } from "./types.js";
 
 export type JobBackend = "bare" | "slurm";
 export type ResolvedBackend = "bare" | "slurm" | "pbs" | "lsf";
@@ -53,7 +53,7 @@ export type JobRecord = {
   lastCheckedAt: string;
 };
 
-const ledgerDir = () => join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "multiservers", "jobs");
+const ledgerDir = () => join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), "hpc", "jobs");
 
 function ledgerPath(id: string): string {
   return join(ledgerDir(), `${id}.json`);
@@ -94,12 +94,12 @@ export function listJobs(server?: string): JobRecord[] {
 }
 
 function jobId(): string {
-  return `mss-${randomBytes(6).toString("hex")}`;
+  return `hpc-${randomBytes(6).toString("hex")}`;
 }
 
 function jobName(serverId: string, requested?: string): string {
   const base = (requested ?? serverId).replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 40);
-  return `mss-${base}-${randomBytes(3).toString("hex")}`;
+  return `hpc-${base}-${randomBytes(3).toString("hex")}`;
 }
 
 /** Resolve the backend for a server: explicit kind, cached detection, or a fresh probe. */
@@ -125,7 +125,7 @@ export async function resolveBackend(
   const detected = result.stdout.trim();
   if (detected === "pbs" || detected === "lsf") {
     await persist?.(detected);
-    throw new MultiserversError(
+    throw new HpcError(
       `Server "${server.id}" runs ${detected.toUpperCase()}; job submission currently supports Slurm and bare metal only.`,
     );
   }
@@ -138,7 +138,7 @@ async function remoteHome(ctx: Context, pool: ConnectionPool, server: ServerSpec
   const state = await pool.ensure(ctx, server);
   const result = await execRemote(state.client, 'printf %s "$HOME"', { timeoutMs: 15_000 });
   const home = result.stdout.trim();
-  if (!home.startsWith("/")) throw new MultiserversError(`Could not resolve HOME on ${server.id}`);
+  if (!home.startsWith("/")) throw new HpcError(`Could not resolve HOME on ${server.id}`);
   return home;
 }
 
@@ -147,7 +147,7 @@ function expandPath(path: string, home: string): string {
 }
 
 function jobRootFor(server: ServerSpec, home: string): string {
-  return expandPath(server.jobRoot ?? "~/.multiservers/jobs", home);
+  return expandPath(server.jobRoot ?? "~/.hpc/jobs", home);
 }
 
 function mergedResources(server: ServerSpec, overrides?: JobResources): JobResources {
@@ -200,7 +200,7 @@ async function writeRemoteFile(
     `printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(path)} && chmod 700 ${shellQuote(path)}`,
     { timeoutMs: 30_000 },
   );
-  if (result.code !== 0) throw new MultiserversError(`Could not write remote script: ${result.stderr.trim()}`);
+  if (result.code !== 0) throw new HpcError(`Could not write remote script: ${result.stderr.trim()}`);
 }
 
 export async function submitJob(
@@ -211,8 +211,8 @@ export async function submitJob(
   persistBackend?: (backend: ResolvedBackend) => Promise<void>,
 ): Promise<JobRecord> {
   const command = (spec.script ? `bash ${shellQuote("<script>")}` : spec.command) ?? "";
-  if (!spec.script && !spec.command) throw new MultiserversError("job_submit needs command or script");
-  if (!spec.workdir.startsWith("/")) throw new MultiserversError("workdir must be absolute");
+  if (!spec.script && !spec.command) throw new HpcError("job_submit needs command or script");
+  if (!spec.workdir.startsWith("/")) throw new HpcError("workdir must be absolute");
 
   const backend = await resolveBackend(ctx, pool, server, persistBackend);
   const home = await remoteHome(ctx, pool, server);
@@ -238,7 +238,7 @@ export async function submitJob(
   };
   const state = await pool.ensure(ctx, server);
   const mkdir = await execRemote(state.client, `mkdir -p ${shellQuote(root)}`, { timeoutMs: 15_000 });
-  if (mkdir.code !== 0) throw new MultiserversError(`Cannot create job directory ${root}: ${mkdir.stderr.trim()}`);
+  if (mkdir.code !== 0) throw new HpcError(`Cannot create job directory ${root}: ${mkdir.stderr.trim()}`);
 
   if (backend === "bare") {
     await writeRemoteFile(ctx, pool, server, record.scriptPath, scriptForBare(record));
@@ -252,7 +252,7 @@ export async function submitJob(
     );
     const pidRead = await execRemote(state.client, `cat ${shellQuote(pidPath)} 2>/dev/null || true`, { timeoutMs: 10_000 });
     const pid = Number((pidRead.stdout.trim() || launch.stdout.trim()).split(/\s+/).pop());
-    if (!Number.isInteger(pid) || pid <= 0) throw new MultiserversError(`Could not start background job: ${launch.stderr.trim()}`);
+    if (!Number.isInteger(pid) || pid <= 0) throw new HpcError(`Could not start background job: ${launch.stderr.trim()}`);
     record.pid = pid;
     const startTime = await execRemote(state.client, `awk '{print $22}' /proc/${pid}/stat 2>/dev/null || true`, {
       timeoutMs: 10_000,
@@ -266,10 +266,10 @@ export async function submitJob(
       timeoutMs: 30_000,
     });
     if (submit.code !== 0) {
-      throw new MultiserversError(`sbatch failed: ${(submit.stderr || submit.stdout).trim()}`);
+      throw new HpcError(`sbatch failed: ${(submit.stderr || submit.stdout).trim()}`);
     }
     const schedulerJobId = submit.stdout.trim().split(";")[0] ?? "";
-    if (!/^\d+$/.test(schedulerJobId)) throw new MultiserversError(`Unexpected sbatch output: ${submit.stdout.trim()}`);
+    if (!/^\d+$/.test(schedulerJobId)) throw new HpcError(`Unexpected sbatch output: ${submit.stdout.trim()}`);
     record.schedulerJobId = schedulerJobId;
     record.state = "queued";
   }

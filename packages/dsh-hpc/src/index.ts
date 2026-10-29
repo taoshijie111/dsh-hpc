@@ -8,7 +8,7 @@ import { resumeWatchers } from "./core/watch.js";
 import type { Config as ConfigShape } from "./core/types.js";
 
 /**
- * dsh-multiservers — remote server management for DeepSeek Harness.
+ * dsh-hpc — remote server management for DeepSeek Harness.
  *
  * Host half: connections, named shell sessions, transfers, tools. The browser
  * half adds the "服务器" settings page.
@@ -16,7 +16,7 @@ import type { Config as ConfigShape } from "./core/types.js";
  * Every field is `.volatile()` so the settings page can edit it while the plugin
  * keeps running; tools read the live section instead of the apply-time snapshot.
  */
-export const name = "dsh-multiservers";
+export const name = "dsh-hpc";
 
 /** Services that must be ready before this plugin registers its tools. */
 export const inject = ["tools", "credentials"];
@@ -83,7 +83,7 @@ export function liveConfig(ctx: Context, fallback: ConfigShape): ConfigShape {
     | undefined;
   if (!settings) return fallback;
   try {
-    const own = settings.describe().find((entry) => entry.ns === "multiservers");
+    const own = settings.describe().find((entry) => entry.ns === "hpc");
     const value = own?.value as ConfigShape | undefined;
     if (value && Array.isArray(value.servers)) return { ...fallback, ...value };
   } catch {
@@ -118,6 +118,6 @@ export function apply(ctx: Context, config: ConfigShape): void {
         .then(() => pool.closeAll())
         .catch(() => undefined);
     },
-    "dsh-multiservers: close connections on unload",
+    "dsh-hpc: close connections on unload",
   );
 }

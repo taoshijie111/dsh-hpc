@@ -69,7 +69,7 @@ export function startJobWatcher(
   if (root?.start && root !== agentJobs) candidates.push({ service: root, scope: "host" });
   if (candidates.length === 0) {
     const message = "background job service is not mounted";
-    if (!quiet) console.error(`[multiservers] watcher unavailable: ${message}`);
+    if (!quiet) console.error(`[hpc] watcher unavailable: ${message}`);
     return { error: message };
   }
   const agentLike = agent as { sessionId?: string; session?: { id?: string } } | undefined;
@@ -78,7 +78,7 @@ export function startJobWatcher(
   const errors: string[] = [];
   const start = (service: JobsService, ownerSessionId?: string): string => {
     return service.start({
-      kind: "mss-job",
+      kind: "hpc-job",
       label: `远程作业 ${recordId}`,
       ...(ownerSessionId ? { owner: ownerSessionId } : {}),
       outputLimitBytes: 4096,
@@ -139,13 +139,13 @@ export function startJobWatcher(
   for (const candidate of candidates) {
     try {
       const id = start(candidate.service, undefined);
-      if (!quiet) console.error(`[multiservers] watcher registered unowned: ${errors.join(" | ")}`);
+      if (!quiet) console.error(`[hpc] watcher registered unowned: ${errors.join(" | ")}`);
       return { id, ownerBound: false, error: errors.join(" | ") };
     } catch (error) {
       errors.push(`${candidate.scope}/unowned: ${(error as Error).message}`);
     }
   }
-  if (!quiet) console.error(`[multiservers] watcher registration failed: ${errors.join(" | ")}`);
+  if (!quiet) console.error(`[hpc] watcher registration failed: ${errors.join(" | ")}`);
   return { error: errors.join(" | ") };
 }
 

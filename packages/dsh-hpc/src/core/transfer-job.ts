@@ -60,7 +60,7 @@ export function startTransferJob(
   for (const service of services) {
     try {
       const jobId = service.start({
-        kind: "mss-transfer",
+        kind: "hpc-transfer",
         label,
         ...(owner ? { owner } : {}),
         outputLimitBytes: 4096,
@@ -168,7 +168,7 @@ export function startTransferQueueJob(
   for (const service of services) {
     try {
       const jobId = service.start({
-        kind: "mss-transfer",
+        kind: "hpc-transfer",
         label,
         ...(owner ? { owner } : {}),
         outputLimitBytes: 4096,

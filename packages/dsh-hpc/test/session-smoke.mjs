@@ -14,10 +14,10 @@ import { join } from "node:path";
 import { ConnectionPool } from "../lib/core/pool.js";
 import { SessionRegistry } from "../lib/core/session.js";
 
-const host = process.env.MSS_TEST_HOST ?? "114.214.255.60";
-const user = process.env.MSS_TEST_USER ?? "taoshijie";
-const keyPath = process.env.MSS_TEST_KEY ?? join(homedir(), ".ssh", "id_ed25519");
-const hostKey = process.env.MSS_TEST_HOSTKEY ?? "SHA256:RdHHL8XKm28DrTNlHdu9NhY+o5qzf8Dr5V/9AbardOI";
+const host = process.env.HPC_TEST_HOST ?? (process.env.HPC_TEST_HOST_A ?? "");
+const user = process.env.HPC_TEST_USER ?? (process.env.HPC_TEST_USER ?? "");
+const keyPath = process.env.HPC_TEST_KEY ?? join(homedir(), ".ssh", "id_ed25519");
+const hostKey = process.env.HPC_TEST_HOSTKEY ?? "SHA256:RdHHL8XKm28DrTNlHdu9NhY+o5qzf8Dr5V/9AbardOI";
 
 const results = [];
 const check = (name, ok, detail) => {

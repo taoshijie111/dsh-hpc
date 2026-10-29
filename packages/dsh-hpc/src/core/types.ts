@@ -51,10 +51,10 @@ export interface ExecResult {
   durationMs: number;
 }
 
-export class MultiserversError extends Error {
+export class HpcError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "MultiserversError";
+    this.name = "HpcError";
   }
 }
 
@@ -69,13 +69,13 @@ export type SchedulerDefaults = {
   gpus?: number;
 };
 
-export const PLUGIN_ID = "multiservers";
+export const PLUGIN_ID = "hpc";
 
 export function findServer(config: Config, id: string): ServerSpec {
   const server = config.servers.find((entry) => entry.id === id);
   if (!server) {
     const known = config.servers.map((entry) => entry.id).join(", ") || "(none)";
-    throw new MultiserversError(`Unknown server "${id}". Configured servers: ${known}`);
+    throw new HpcError(`Unknown server "${id}". Configured servers: ${known}`);
   }
   return server;
 }

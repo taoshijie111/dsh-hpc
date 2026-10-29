@@ -1,7 +1,7 @@
 {
-  "name": "dsh-multiservers",
+  "name": "dsh-hpc",
   "version": "0.1.0",
-  "description": "DeepSeek Harness plugin: manage remote servers and operate them over SSH (exec, files, transfer).",
+  "description": "DeepSeek Harness plugin for HPC and remote servers: pooled SSH connections, sticky sessions, Slurm/bare-metal background jobs, resumable transfers, and a settings panel.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -66,5 +66,18 @@
     "@types/ssh2": "^1.15.5",
     "typescript": "^5.9.3",
     "@deepseek-ai/dsh-jobs": "0.2.1-rc.2"
-  }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "hpc",
+    "slurm",
+    "ssh",
+    "sftp",
+    "cluster",
+    "remote"
+  ],
+  "license": "MIT",
+  "author": "dsh-hpc contributors"
 }

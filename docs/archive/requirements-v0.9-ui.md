@@ -420,12 +420,12 @@ Citadel 的可复用经验：幂等回执 + `uncertain` 不重放、架构边界
 
 ### 16.3 S0.2 已完成：连接、认证与端点探测（真实主机）
 
-测试端点：`114.214.255.60:22`，用户 `taoshijie`；实现栈为本项目实际选型 **Node 24 + ssh2**（非系统 `ssh`）。
+测试端点：`hpc.example.invalid:22`，用户 `your-user`；实现栈为本项目实际选型 **Node 24 + ssh2**（非系统 `ssh`）。
 
 | 验证项 | 结果 | 证据 |
 | --- | --- | --- |
 | 公钥认证 | ✅ 通过（本机 `~/.ssh/config` 已配 `IdentityFile`，`ssh -G` 可见；ssh2 直接加载该私钥） | 连接 205 ms，`hostname=login01` |
-| 密码认证 | ✅ 通过（`SSH_PASS` 经环境变量传入，未落盘） | `PASSWORD_AUTH_OK` / `taoshijie` / `login01` |
+| 密码认证 | ✅ 通过（`SSH_PASS` 经环境变量传入，未落盘） | `PASSWORD_AUTH_OK` / `your-user` / `login01` |
 | 主机密钥指纹 | `SHA256:RdHHL8XKm28DrTNlHdu9NhY+o5qzf8Dr5V/9AbardOI` | `hostVerifier` 采集，可作为 pin 示例 |
 | 远端零安装 | ✅ 成立：全程只用 `exec` 跑只读命令，未写入任何文件、未安装任何组件 | 探测脚本仅含 `hostname/uname/cat/command -v/df/quota` |
 
@@ -441,7 +441,7 @@ Citadel 的可复用经验：幂等回执 + `uncertain` 不重放、架构边界
 | 运行时 | python3（miniconda）、conda、docker；无 singularity/apptainer |
 | 模块系统 | `module` 命令可用 |
 | 存储 | `/public` 800 TB（Nexdata，38% 用量）；`/usr/local/globle/softs` 491 GB；`/` 141 GB |
-| HOME / SHELL | `/public/home/taoshijie` / `/bin/bash` |
+| HOME / SHELL | `/public/home/your-user` / `/bin/bash` |
 
 **探测发现的两个设计要点**：
 
@@ -488,13 +488,13 @@ SSH_HOST=<host> SSH_USER=<user> SSH_PASS=<password> node scripts/dev/ssh-probe.m
 
 | 步骤 | 结果 | 证据 |
 | --- | --- | --- |
-| 移植 `carrier-protocol` + `web-carrier` | ✅ 完成，包名改为 `@multiservers/*`，`citadel` 字样已清理 | `packages/carrier-protocol/`、`packages/web-carrier/` |
-| 入口路径与 cookie 前缀更名 | ✅ `/__multiservers/enter`、`multiservers_page_*` | `packages/carrier-protocol/src/index.ts:73`、`packages/web-carrier/src/carrier.ts:124` |
+| 移植 `carrier-protocol` + `web-carrier` | ✅ 完成，包名改为 `@hpc/*`，`citadel` 字样已清理 | `packages/carrier-protocol/`、`packages/web-carrier/` |
+| 入口路径与 cookie 前缀更名 | ✅ `/__hpc/enter`、`hpc_page_*` | `packages/carrier-protocol/src/index.ts:73`、`packages/web-carrier/src/carrier.ts:124` |
 | 构建 | ✅ `npm run build` 通过，产出 `dist/*.js` + `*.d.ts` | 两个包的 `dist/` |
 | **Windows 兼容性冒烟** | ✅ **7/7 通过**：启动→监听→ticket→pass cookie→转发上游→匿名拒绝→撤销拒绝 | `npm run test:carrier`（`scripts/dev/carrier-smoke.mjs`） |
-| 关键跨平台适配 | 上游中继 socket 在 Windows 上用命名管道 `\\.\pipe\multiservers-*`，在 POSIX 上用 Unix domain socket | 冒烟测试同时覆盖两种分支 |
+| 关键跨平台适配 | 上游中继 socket 在 Windows 上用命名管道 `\\.\pipe\hpc-*`，在 POSIX 上用 Unix domain socket | 冒烟测试同时覆盖两种分支 |
 
-**冒烟测试证明的链路**：`fork(carrier)` → IPC 下发 target → carrier 监听独立端口 → `GET /__multiservers/enter?ticket=…` 返回 303 + `HttpOnly; SameSite=Strict` cookie → 带 cookie 请求到达上游 → 无 pass 返回 401 → `revoke-passes` 后旧 pass 失效。
+**冒烟测试证明的链路**：`fork(carrier)` → IPC 下发 target → carrier 监听独立端口 → `GET /__hpc/enter?ticket=…` 返回 303 + `HttpOnly; SameSite=Strict` cookie → 带 cookie 请求到达上游 → 无 pass 返回 401 → `revoke-passes` 后旧 pass 失效。
 
 **尚未验证（留待接入真实 harness 时）**：WebSocket upgrade 转发、真实 dsh/kimi 页面的响应头（XFO/CSP）重写、目标应用断线重连。
 

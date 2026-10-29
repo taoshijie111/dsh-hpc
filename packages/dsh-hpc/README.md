@@ -1,6 +1,8 @@
-# dsh-multiservers
+# dsh-hpc
 
-DeepSeek Harness plugin: manage remote servers and operate them over SSH.
+DeepSeek Harness plugin for HPC and remote servers: pooled SSH connections, sticky shell
+sessions, Slurm and bare-metal background jobs with completion notices, resumable
+single-file/directory/queue transfers, and a settings panel with live resource sampling.
 
 Exposes 12 tools to the model — server registry, connectivity/host-key checks, capability probing,
 command execution, SFTP file operations and transfers. No separate UI, no daemon: the plugin runs
@@ -30,7 +32,7 @@ DSH Settings → 服务器 shows live server state: online/offline, active sessi
 Each row has a **资源占用** action that samples the machine over the pooled SSH connection and renders
 load, memory, CPU, GPU (`nvidia-smi`/`rocm-smi`), disks and the user's scheduler jobs. A **刷新**
 button re-reads the connection state. The page calls two host endpoints
-(`/api/multiservers/status`, `/api/multiservers/usage`) that require the `x-multiservers-request: 1`
+(`/api/hpc/status`, `/api/hpc/usage`) that require the `x-hpc-request: 1`
 same-origin header.
 
 ## Install
@@ -47,15 +49,15 @@ dsh --profile mss --port 4400
 ## Configuration
 
 ```yaml
-- id: multiservers
-  name: dsh-multiservers
+- id: hpc
+  name: dsh-hpc
   config:
     servers:
       - id: hpc1
         label: HPC login node
-        host: 114.214.255.60
+        host: hpc.example.invalid
         port: 22
-        username: taoshijie
+        username: your-user
         auth: key              # password | key
         keyPath: C:/Users/you/.ssh/id_ed25519
         hostKey: SHA256:...    # pin on first server_test if empty
@@ -71,7 +73,7 @@ Password authentication never puts the secret in this file: set the credential
 ```bash
 npm run build
 npm run typecheck
-MSS_TEST_HOST=<host> MSS_TEST_USER=<user> MSS_TEST_KEY=<key> node test/tools-smoke.mjs
+HPC_TEST_HOST=<host> HPC_TEST_USER=<user> HPC_TEST_KEY=<key> node test/tools-smoke.mjs
 ```
 
 
@@ -84,7 +86,7 @@ user, auth mode, key path or password, optional pinned fingerprint) and removes 
 - Non-secret fields are written through the client `configForms` service.
 - Passwords are written through `remote.credentials` into DSH's credential store as
   `MSS_<ID>_PASSWORD`; they never enter the profile configuration.
-- The page only appears while the Host serves the `multiservers` settings namespace
+- The page only appears while the Host serves the `hpc` settings namespace
   (`configForms.whileServed`).
 
 Editing an existing server and a "test connection" action are the next increments.

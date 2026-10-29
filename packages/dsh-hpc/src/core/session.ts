@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { Client, ClientChannel } from "ssh2";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ConnectionPool } from "./pool.js";
-import { findServer, MultiserversError, type Config, type ServerSpec } from "./types.js";
+import { findServer, HpcError, type Config, type ServerSpec } from "./types.js";
 
 const MARKER = "\x1eMSS";
 const MAX_BUFFER = 1024 * 1024;
@@ -83,7 +83,7 @@ export class ShellSession {
     return new Promise<void>((resolve, reject) => {
       this.client.exec("bash -l", (error, stream) => {
         if (error) {
-          reject(new MultiserversError(`Could not start a shell session: ${error.message}`));
+          reject(new HpcError(`Could not start a shell session: ${error.message}`));
           return;
         }
         this.stream = stream;
@@ -111,7 +111,7 @@ export class ShellSession {
         poll.unref?.();
         const fail = setTimeout(() => {
           clearInterval(poll);
-          reject(new MultiserversError("Shell session did not become ready"));
+          reject(new HpcError("Shell session did not become ready"));
         }, 15_000);
         fail.unref?.();
       });
@@ -205,7 +205,7 @@ export class ShellSession {
   }
 
   async run(command: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
-    if (this.closed) throw new MultiserversError(`Session "${this.name}" is closed`);
+    if (this.closed) throw new HpcError(`Session "${this.name}" is closed`);
     if (!this.alive) await this.restart();
     return this.enqueue(command, timeoutMs, signal);
   }
@@ -368,7 +368,7 @@ export class SessionRegistry {
     const inUse = [...this.sessions.values()].filter((session) => session.serverId === serverId && session.alive).length;
     const limit = this.options.maxPerServer();
     if (inUse >= limit) {
-      throw new MultiserversError(
+      throw new HpcError(
         `Server "${serverId}" already has ${inUse} sessions (limit ${limit}); close an idle session first.`,
       );
     }

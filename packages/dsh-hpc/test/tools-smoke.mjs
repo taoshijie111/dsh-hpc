@@ -5,12 +5,18 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect as netConnect } from "node:net";
 import * as plugin from "../lib/index.js";
+const __need = ["HPC_TEST_HOST_A", "HPC_TEST_USER", "HPC_TEST_PASSWORD_A"];
+if (__need.some((key) => !process.env[key])) {
+  console.log(`SKIP: set ${__need.join(", ")} to run integration tests`);
+  process.exit(0);
+}
 
-const host = process.env.MSS_TEST_HOST ?? "114.214.255.60";
-const user = process.env.MSS_TEST_USER ?? "taoshijie";
+
+const host = process.env.HPC_TEST_HOST ?? (process.env.HPC_TEST_HOST_A ?? "");
+const user = process.env.HPC_TEST_USER ?? (process.env.HPC_TEST_USER ?? "");
 const home = `/public/home/${user}`;
-const keyPath = process.env.MSS_TEST_KEY ?? join(homedir(), ".ssh", "id_ed25519");
-const hostKey = process.env.MSS_TEST_HOSTKEY ?? "SHA256:RdHHL8XKm28DrTNlHdu9NhY+o5qzf8Dr5V/9AbardOI";
+const keyPath = process.env.HPC_TEST_KEY ?? join(homedir(), ".ssh", "id_ed25519");
+const hostKey = process.env.HPC_TEST_HOSTKEY ?? "SHA256:RdHHL8XKm28DrTNlHdu9NhY+o5qzf8Dr5V/9AbardOI";
 
 const results = [];
 const check = (name, ok, detail) => {
@@ -52,7 +58,7 @@ const call = (name, args) => {
   return d.execute(args, { signal: new AbortController().signal });
 };
 
-const work = mkdtempSync(join(tmpdir(), "mss-v3-"));
+const work = mkdtempSync(join(tmpdir(), "hpc-v3-"));
 const localUp = join(work, "up.txt");
 const downloadDir = join(work, "downloaded");
 const localDown = join(downloadDir, "up.txt");
@@ -62,7 +68,7 @@ writeFileSync(join(dirUp, "a.txt"), "alpha\n", "utf8");
 writeFileSync(join(dirUp, "sub", "b.txt"), "beta\n", "utf8");
 const payload = `v3 ${new Date().toISOString()}\n`.repeat(3);
 writeFileSync(localUp, payload, "utf8");
-const remoteRoot = `${home}/.mss-tools-${process.pid}`;
+const remoteRoot = `${home}/.hpc-tools-${process.pid}`;
 const remoteFile = `${remoteRoot}/up.txt`;
 const treeRemote = `${remoteRoot}/tree`;
 const localDirDown = join(work, "tree-down");

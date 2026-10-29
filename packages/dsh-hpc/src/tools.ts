@@ -10,7 +10,7 @@ import { execRemote, passwordRefFor } from "./core/ssh.js";
 import { cancelJob, loadJob, queryJobs, readJobLogs, saveJob, submitJob } from "./core/jobs.js";
 import { startJobWatcher } from "./core/watch.js";
 import { runTransferQueue, startTransferJob, startTransferQueueJob, type QueueItem } from "./core/transfer-job.js";
-import { MultiserversError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
+import { HpcError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
 
 const text = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }];
 const objectOutput = {
@@ -28,7 +28,7 @@ type SettingsLike = {
 export async function writeServers(ctx: Context, servers: ServerSpec[]): Promise<void> {
   const settings = ctx.get("settings") as SettingsLike | undefined;
   if (!settings) {
-    throw new MultiserversError(
+    throw new HpcError(
       "The Settings service is not mounted; add servers by editing this plugin's config in the profile cordis.patch.yml.",
     );
   }
@@ -131,10 +131,10 @@ export function registerTools(
       async execute(args) {
         const config = getConfig();
         if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(args.id)) {
-          throw new MultiserversError("id must match ^[a-z0-9][a-z0-9-]{0,63}$");
+          throw new HpcError("id must match ^[a-z0-9][a-z0-9-]{0,63}$");
         }
         const auth = (args.auth ?? "password") as "password" | "key";
-        if (auth === "key" && !args.keyPath) throw new MultiserversError("key auth requires keyPath");
+        if (auth === "key" && !args.keyPath) throw new HpcError("key auth requires keyPath");
         const existing = config.servers.find((entry) => entry.id === args.id);
         const defaults = {
           ...(existing?.schedulerDefaults ?? {}),
@@ -338,7 +338,7 @@ export function registerTools(
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
-        if (!args.remoteDir) throw new MultiserversError("upload needs remoteDir (parent directory on the server)");
+        if (!args.remoteDir) throw new HpcError("upload needs remoteDir (parent directory on the server)");
         const remotePath = posix.join(args.remoteDir, posix.basename(args.localPath.replaceAll(String.fromCharCode(92), "/")));
         const options = {
           overwrite: Boolean(args.overwrite),
@@ -347,7 +347,7 @@ export function registerTools(
         };
         if (args.background) {
           const started = startTransferJob(ctx, exec.agent, state.client, "upload", { localPath: args.localPath, remotePath }, options);
-          if (!started.jobId) throw new MultiserversError(`background upload unavailable: ${started.error ?? "unknown error"}`);
+          if (!started.jobId) throw new HpcError(`background upload unavailable: ${started.error ?? "unknown error"}`);
           return jsonSafe({ server: server.id, background: true, jobId: started.jobId, localPath: args.localPath, remotePath });
         }
         const startedAt = Date.now();
@@ -375,7 +375,7 @@ export function registerTools(
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
-        if (!args.localDir) throw new MultiserversError("download needs localDir (parent directory on this machine)");
+        if (!args.localDir) throw new HpcError("download needs localDir (parent directory on this machine)");
         const localPath = join(args.localDir, basename(args.remotePath));
         const options = {
           overwrite: Boolean(args.overwrite),
@@ -384,7 +384,7 @@ export function registerTools(
         };
         if (args.background) {
           const started = startTransferJob(ctx, exec.agent, state.client, "download", { localPath, remotePath: args.remotePath }, options);
-          if (!started.jobId) throw new MultiserversError(`background download unavailable: ${started.error ?? "unknown error"}`);
+          if (!started.jobId) throw new HpcError(`background download unavailable: ${started.error ?? "unknown error"}`);
           return jsonSafe({ server: server.id, background: true, jobId: started.jobId, remotePath: args.remotePath, localPath });
         }
         const startedAt = Date.now();
@@ -438,9 +438,9 @@ export function registerTools(
             };
           });
         } catch (error) {
-          throw new MultiserversError(`items must be a JSON array of {source, targetDir}: ${(error as Error).message}`);
+          throw new HpcError(`items must be a JSON array of {source, targetDir}: ${(error as Error).message}`);
         }
-        if (items.length === 0) throw new MultiserversError("items must contain at least one entry");
+        if (items.length === 0) throw new HpcError("items must contain at least one entry");
         const continueOnError = args.continueOnError !== false;
         const options = {
           overwrite: Boolean(args.overwrite),
@@ -477,7 +477,7 @@ export function registerTools(
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
         if (args.close) {
-          if (!args.localPort) throw new MultiserversError("close requires localPort");
+          if (!args.localPort) throw new HpcError("close requires localPort");
           return {
             server: server.id,
             localPort: args.localPort,
@@ -486,7 +486,7 @@ export function registerTools(
             closed: pool.closeForward(state, args.localPort),
           };
         }
-        if (!args.remotePort) throw new MultiserversError("remotePort is required");
+        if (!args.remotePort) throw new HpcError("remotePort is required");
         const remoteHost = args.remoteHost ?? "127.0.0.1";
         const localServer = createServer((socket) => {
           state.client.forwardOut("127.0.0.1", socket.remotePort ?? 0, remoteHost, args.remotePort!, (error, stream) => {
@@ -575,7 +575,7 @@ export function registerTools(
             if (!watch.id || watch.ownerBound === false) watchError = watch.error ?? "watcher is not bound to this session; completion notices may not arrive";
           } catch (watchFailure) {
             watchError = `watcher registration threw: ${(watchFailure as Error).message}`;
-            console.error("[multiservers] watcher registration threw", watchFailure);
+            console.error("[hpc] watcher registration threw", watchFailure);
           }
         }
         return jsonSafe({ ...record, jobId: record.id, watching: Boolean(watchJobId), ...(watchError ? { watchError } : {}) });
@@ -631,7 +631,7 @@ export function registerTools(
       output: objectOutput,
       async execute(args) {
         const record = loadJob(args.jobId);
-        if (!record) throw new MultiserversError(`Unknown job "${args.jobId}"`);
+        if (!record) throw new HpcError(`Unknown job "${args.jobId}"`);
         const server = findServer(getConfig(), record.server);
         const result = await readJobLogs(ctx, pool, server, record, {
           ...(args.offset !== undefined ? { offset: args.offset } : {}),
@@ -659,7 +659,7 @@ export function registerTools(
         for (;;) {
           const jobs = await queryJobs(ctx, pool, getConfig().servers, { jobId: args.jobId });
           const job = jobs[0];
-          if (!job) throw new MultiserversError(`Unknown job "${args.jobId}"`);
+          if (!job) throw new HpcError(`Unknown job "${args.jobId}"`);
           const terminal = ["completed", "failed", "cancelled", "lost"].includes(job.state);
           if (terminal || Date.now() >= deadline) {
             return jsonSafe({
@@ -687,7 +687,7 @@ export function registerTools(
       output: objectOutput,
       async execute(args) {
         const record = loadJob(args.jobId);
-        if (!record) throw new MultiserversError(`Unknown job "${args.jobId}"`);
+        if (!record) throw new HpcError(`Unknown job "${args.jobId}"`);
         if (record.watchJobId) {
           const jobs = ctx.get("jobs") as { kill?: (id: string, caller?: string, reason?: string) => string } | undefined;
           try {

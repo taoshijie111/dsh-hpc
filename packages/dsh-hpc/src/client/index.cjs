@@ -1,5 +1,5 @@
 /**
- * dsh-multiservers — browser half.
+ * dsh-hpc — browser half.
  *
  * Adds a "服务器" section to DSH Settings. Copy is written for the person using
  * it: no tool names, no storage or schema jargon. Non-secret fields go through
@@ -8,7 +8,7 @@
  * Delivered as a lazy-CJS module factory for the DSH client module loader.
  */
 window.__ModuleLoader__.load({
-  id: "dsh-multiservers",
+  id: "dsh-hpc",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
     const React = require("react");
     const h = React.createElement;
 
-    const NS = "multiservers";
+    const NS = "hpc";
     const refFor = (id) => `MSS_${String(id).toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_PASSWORD`;
 
     const line = "1px solid color-mix(in srgb, currentColor 13%, transparent)";
@@ -376,8 +376,8 @@ window.__ModuleLoader__.load({
       const detect = async (id) => {
         setDetecting((current) => ({ ...current, [id]: true }));
         try {
-          const response = await fetch(`/api/multiservers/detect?server=${encodeURIComponent(id)}`, {
-            headers: { "x-multiservers-request": "1" },
+          const response = await fetch(`/api/hpc/detect?server=${encodeURIComponent(id)}`, {
+            headers: { "x-hpc-request": "1" },
           });
           const body = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
@@ -393,7 +393,7 @@ window.__ModuleLoader__.load({
         setBusy(true);
         setError("");
         try {
-          const response = await fetch("/api/multiservers/status", { headers: { "x-multiservers-request": "1" } });
+          const response = await fetch("/api/hpc/status", { headers: { "x-hpc-request": "1" } });
           const body = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
           setData(body);
@@ -411,8 +411,8 @@ window.__ModuleLoader__.load({
       const sample = async (id) => {
         setSamples((current) => ({ ...current, [id]: { loading: true } }));
         try {
-          const response = await fetch(`/api/multiservers/usage?server=${encodeURIComponent(id)}`, {
-            headers: { "x-multiservers-request": "1" },
+          const response = await fetch(`/api/hpc/usage?server=${encodeURIComponent(id)}`, {
+            headers: { "x-hpc-request": "1" },
           });
           const body = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
@@ -867,7 +867,7 @@ window.__ModuleLoader__.load({
             ctx.slots.register(
               {
                 name: "settings.section",
-                id: "multiservers",
+                id: "hpc",
                 order: 40,
                 label: () => "服务器",
                 inject: () => page,
@@ -875,7 +875,7 @@ window.__ModuleLoader__.load({
               ServersSection,
             ),
           ),
-        "dsh-multiservers: servers settings section",
+        "dsh-hpc: servers settings section",
       );
     }
 

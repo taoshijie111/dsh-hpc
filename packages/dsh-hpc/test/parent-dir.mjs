@@ -4,8 +4,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import * as plugin from "../lib/index.js";
+const __need = ["HPC_TEST_HOST_A", "HPC_TEST_USER", "HPC_TEST_PASSWORD_A", "HPC_TEST_HOST_B", "HPC_TEST_PASSWORD_B"];
+if (__need.some((key) => !process.env[key])) {
+  console.log(`SKIP: set ${__need.join(", ")} to run integration tests`);
+  process.exit(0);
+}
 
-const serverId = process.env.MSS_TEST_SERVER ?? "wxj-94";
+
+const serverId = process.env.HPC_TEST_SERVER ?? "wxj-94";
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");
@@ -49,11 +55,11 @@ plugin.apply(globalThis.__ctx, {
   servers: [
     {
       id: serverId,
-      host: "114.214.255.94",
+      host: (process.env.HPC_TEST_HOST_B ?? ""),
       port: 22,
-      username: "taoshijie",
+      username: (process.env.HPC_TEST_USER ?? ""),
       auth: "password",
-      passwordRef: "MSS_WXJ_94_PASSWORD",
+      passwordRef: "HPC_TEST_PASSWORD_B",
       kind: "bare",
     },
   ],
@@ -72,7 +78,7 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 };
 
-const work = mkdtempSync(join(tmpdir(), "mss-parent-"));
+const work = mkdtempSync(join(tmpdir(), "hpc-parent-"));
 const runId = `${Date.now().toString(36)}`;
 writeFileSync(join(work, "single.txt"), `single ${runId}\n`);
 const pkg = join(work, "pkg");
@@ -80,7 +86,7 @@ mkdirSync(join(pkg, "nested"), { recursive: true });
 writeFileSync(join(pkg, "nested", "x.txt"), "nested\n");
 
 const home = (await call("shell_run", { server: serverId, command: 'printf %s "$HOME"' })).stdout.trim();
-const base = `${home}/.mss-parent-${runId}`;
+const base = `${home}/.hpc-parent-${runId}`;
 const localOut = join(work, "out");
 mkdirSync(localOut, { recursive: true });
 

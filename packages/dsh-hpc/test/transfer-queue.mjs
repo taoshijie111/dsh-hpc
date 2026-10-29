@@ -7,8 +7,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import * as plugin from "../lib/index.js";
+const __need = ["HPC_TEST_HOST_A", "HPC_TEST_USER", "HPC_TEST_PASSWORD_A", "HPC_TEST_HOST_B", "HPC_TEST_PASSWORD_B"];
+if (__need.some((key) => !process.env[key])) {
+  console.log(`SKIP: set ${__need.join(", ")} to run integration tests`);
+  process.exit(0);
+}
 
-const serverId = process.env.MSS_TEST_SERVER ?? "wxj-94";
+
+const serverId = process.env.HPC_TEST_SERVER ?? "wxj-94";
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");
@@ -49,11 +55,11 @@ plugin.apply(ctx, {
   servers: [
     {
       id: serverId,
-      host: serverId === "jz" ? "114.214.255.60" : "114.214.255.94",
+      host: serverId === "jz" ? (process.env.HPC_TEST_HOST_A ?? "") : (process.env.HPC_TEST_HOST_B ?? ""),
       port: 22,
-      username: "taoshijie",
+      username: (process.env.HPC_TEST_USER ?? ""),
       auth: "password",
-      passwordRef: serverId === "jz" ? "MSS_JZ_PASSWORD" : "MSS_WXJ_94_PASSWORD",
+      passwordRef: serverId === "jz" ? "HPC_TEST_PASSWORD_A" : "HPC_TEST_PASSWORD_B",
       kind: "bare",
     },
   ],
@@ -72,7 +78,7 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 };
 
-const work = mkdtempSync(join(tmpdir(), "mss-queue-"));
+const work = mkdtempSync(join(tmpdir(), "hpc-queue-"));
 const runId = `${Date.now().toString(36)}`;
 const files = ["a.txt", "b.txt", "c.txt"];
 const dir = join(work, "pkg");
@@ -81,7 +87,7 @@ writeFileSync(join(dir, "nested", "d.bin"), Buffer.alloc(2048, 5));
 for (const name of files) writeFileSync(join(work, name), `${name} ${runId}\n`);
 
 const home = (await call("shell_run", { server: serverId, command: 'printf %s "$HOME"' })).stdout.trim();
-const base = `${home}/.mss-queue-${runId}`;
+const base = `${home}/.hpc-queue-${runId}`;
 await call("shell_run", { server: serverId, command: `mkdir -p ${base}` });
 
 try {

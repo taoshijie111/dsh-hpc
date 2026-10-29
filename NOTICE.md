@@ -7,8 +7,8 @@ project, reused with the author's explicit permission):
 
 | This repository | Origin | Notes |
 | --- | --- | --- |
-| `packages/carrier-protocol/src/index.ts` | `packages/carrier-protocol/src/index.ts` | package renamed `@citadel/*` → `@multiservers/*`; entry path `/__citadel/enter` → `/__multiservers/enter` |
-| `packages/web-carrier/src/carrier.ts` | `packages/web-carrier/src/carrier.ts` | cookie prefix `citadel_page_` → `multiservers_page_`; user-facing strings renamed |
+| `packages/carrier-protocol/src/index.ts` | `packages/carrier-protocol/src/index.ts` | package renamed `@citadel/*` → `@hpc/*`; entry path `/__citadel/enter` → `/__hpc/enter` |
+| `packages/web-carrier/src/carrier.ts` | `packages/web-carrier/src/carrier.ts` | cookie prefix `citadel_page_` → `hpc_page_`; user-facing strings renamed |
 | `packages/web-carrier/src/main.ts` | `packages/web-carrier/src/main.ts` | import renamed |
 | `scripts/dev/carrier-smoke.mjs` | new (inspired by Citadel's carrier design) | integration smoke test for this repository |
 

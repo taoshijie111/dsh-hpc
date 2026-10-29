@@ -9,8 +9,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import * as plugin from "../lib/index.js";
+const __need = ["HPC_TEST_HOST_A", "HPC_TEST_USER", "HPC_TEST_PASSWORD_A", "HPC_TEST_HOST_B", "HPC_TEST_PASSWORD_B"];
+if (__need.some((key) => !process.env[key])) {
+  console.log(`SKIP: set ${__need.join(", ")} to run integration tests`);
+  process.exit(0);
+}
 
-const serversToTest = (process.env.MSS_TEST_SERVERS ?? "wxj-94,jz").split(",").map((value) => value.trim()).filter(Boolean);
+
+const serversToTest = (process.env.HPC_TEST_SERVERS ?? "wxj-94,jz").split(",").map((value) => value.trim()).filter(Boolean);
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");
@@ -50,11 +56,11 @@ const ctx = {
 plugin.apply(ctx, {
   servers: serversToTest.map((id) => ({
     id,
-    host: id === "jz" ? "114.214.255.60" : "114.214.255.94",
+    host: id === "jz" ? (process.env.HPC_TEST_HOST_A ?? "") : (process.env.HPC_TEST_HOST_B ?? ""),
     port: 22,
-    username: "taoshijie",
+    username: (process.env.HPC_TEST_USER ?? ""),
     auth: "password",
-    passwordRef: id === "jz" ? "MSS_JZ_PASSWORD" : "MSS_WXJ_94_PASSWORD",
+    passwordRef: id === "jz" ? "HPC_TEST_PASSWORD_A" : "HPC_TEST_PASSWORD_B",
     kind: id === "jz" ? "slurm" : "bare",
   })),
   connectTimeoutMs: 20000,
@@ -72,7 +78,7 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 };
 
-const work = mkdtempSync(join(tmpdir(), "mss-xfer2-"));
+const work = mkdtempSync(join(tmpdir(), "hpc-xfer2-"));
 const runId = `${Date.now().toString(36)}-${process.pid}`;
 const local = (name) => join(work, name);
 
@@ -95,7 +101,7 @@ const cleanup = [];
 try {
   for (const server of serversToTest) {
     const home = (await call("shell_run", { server, command: 'printf %s "$HOME"' })).stdout.trim();
-    const base = `${home}/.mss-xfer2-${runId}-${server}`;
+    const base = `${home}/.hpc-xfer2-${runId}-${server}`;
     cleanup.push({ server, base });
     await call("shell_run", { server, command: `mkdir -p ${base}` });
 
