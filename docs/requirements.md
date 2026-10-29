@@ -276,7 +276,7 @@
 | 参数 | `upload(localPath, remoteDir)`、`download(remotePath, localDir)`：目标 = 父目录 + 来源 basename；父目录必须由调用方显式给出 |
 | 队列 | `transfer_queue` 条目改为 `{source, targetDir}`（上传 targetDir=远端父目录，下载 targetDir=本地父目录） |
 | 行为 | 不再从来源路径自动推导目标父目录；显式给出的父目录不存在时创建；缺失父目录参数会明确报错 |
-| 兼容 | 旧的全路径参数 `remotePath`/`localPath`/`{localPath,remotePath}` 仍接受 |
+| 兼容 | 不保留旧的全路径参数；缺少父目录参数直接报错 |
 | 验证 | `test/parent-dir.mjs` 8/8：文件/目录上传下载的 basename 追加、队列 targetDir、旧参数兼容、缺参报错 |
 
 ## 10. 待定

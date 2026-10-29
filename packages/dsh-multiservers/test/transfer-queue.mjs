@@ -87,9 +87,9 @@ await call("shell_run", { server: serverId, command: `mkdir -p ${base}` });
 try {
   // 1) upload queue: three files + one directory
   const uploadItems = [
-    ...files.map((name) => ({ localPath: join(work, name), remotePath: `${base}/${name}` })),
-    { localPath: dir, remotePath: `${base}/pkg` },
-    { localPath: join(work, "a.txt"), remotePath: `${base}/newdir/deep/a.txt` },
+    ...files.map((name) => ({ source: join(work, name), targetDir: base })),
+    { source: dir, targetDir: base },
+    { source: join(work, "a.txt"), targetDir: `${base}/newdir/deep` },
   ];
   const upload = await call("transfer_queue", { server: serverId, direction: "upload", items: JSON.stringify(uploadItems), background: false });
   check("queue upload completes all items", upload.failed === 0 && upload.items.filter((entry) => entry.ok).length === 5, `files=${upload.files}`);
@@ -99,8 +99,8 @@ try {
   // 2) download queue into separate directories
   const downDir = join(work, "down");
   const downloadItems = [
-    ...files.map((name) => ({ remotePath: `${base}/${name}`, localPath: join(downDir, name) })),
-    { remotePath: `${base}/pkg`, localPath: join(downDir, "pkg") },
+    ...files.map((name) => ({ source: `${base}/${name}`, targetDir: downDir })),
+    { source: `${base}/pkg`, targetDir: downDir },
   ];
   const download = await call("transfer_queue", { server: serverId, direction: "download", items: JSON.stringify(downloadItems), background: false });
   check("queue download completes all items", download.failed === 0, `files=${download.files}`);
@@ -109,8 +109,8 @@ try {
 
   // 3) continueOnError=true keeps going after a bad item
   const mixed = [
-    { localPath: join(work, "missing.txt"), remotePath: `${base}/missing.txt` },
-    ...files.map((name) => ({ localPath: join(work, name), remotePath: `${base}/retry-${name}` })),
+    { source: join(work, "missing.txt"), targetDir: base },
+    ...files.map((name) => ({ source: join(work, name), targetDir: `${base}/retry` })),
   ];
   const tolerant = await call("transfer_queue", { server: serverId, direction: "upload", items: JSON.stringify(mixed), background: false });
   check("continueOnError keeps going", tolerant.failed === 1 && tolerant.items.filter((entry) => entry.ok).length === 3);
@@ -126,7 +126,7 @@ try {
   check("continueOnError=false stops early", strict.failed === 1 && strict.items.length === 1, `items=${strict.items.length}`);
 
   // 5) background requested without a job registry falls back to foreground
-  const fallback = await call("transfer_queue", { server: serverId, direction: "upload", items: JSON.stringify([{ localPath: join(work, "a.txt"), remotePath: `${base}/fallback.txt` }]) });
+  const fallback = await call("transfer_queue", { server: serverId, direction: "upload", items: JSON.stringify([{ source: join(work, "a.txt"), targetDir: base }]) });
   check("background falls back to foreground without registry", fallback.background === undefined && fallback.failed === 0);
 
   // 6) invalid JSON is rejected clearly

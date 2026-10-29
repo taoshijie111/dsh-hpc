@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 /**
- * Transfer integration test: single file, directory tree, multiple files,
- * binary content, resume (.part) upload/download, overwrite guard.
- *
- * Env: MSS_TEST_SERVERS="wxj-94,jz" to override the server list.
+ * Transfer integration test with explicit parent directories:
+ * single file, binary, directory tree, multiple files, overwrite guard,
+ * .part resume both directions, leftovers and missing files.
  */
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import * as plugin from "../lib/index.js";
 
 const serversToTest = (process.env.MSS_TEST_SERVERS ?? "wxj-94,jz").split(",").map((value) => value.trim()).filter(Boolean);
@@ -31,12 +30,6 @@ function credentialStore() {
   return map;
 }
 
-const results = [];
-const check = (name, ok, detail) => {
-  results.push({ name, ok });
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
-};
-
 const store = credentialStore();
 const registered = new Map();
 const ctx = {
@@ -54,8 +47,7 @@ const ctx = {
   inject: (_names, callback) => callback({}),
   effect: () => {},
 };
-
-const config = {
+plugin.apply(ctx, {
   servers: serversToTest.map((id) => ({
     id,
     host: id === "jz" ? "114.214.255.60" : "114.214.255.94",
@@ -71,15 +63,19 @@ const config = {
   idleTimeoutMs: 600000,
   maxSessionsPerServer: 4,
   sessionIdleTimeoutMs: 1800000,
-};
-plugin.apply(ctx, config);
+});
 const call = (name, args) => registered.get(name).execute(args, { signal: new AbortController().signal });
 
-const work = mkdtempSync(join(tmpdir(), "mss-xfer-"));
+const results = [];
+const check = (name, ok, detail) => {
+  results.push({ name, ok });
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
+};
+
+const work = mkdtempSync(join(tmpdir(), "mss-xfer2-"));
 const runId = `${Date.now().toString(36)}-${process.pid}`;
 const local = (name) => join(work, name);
 
-// ---- local fixtures ----
 const textPayload = `single file ${runId}\n`.repeat(40);
 writeFileSync(local("single.txt"), textPayload, "utf8");
 const binaryPayload = randomBytes(4096);
@@ -99,94 +95,105 @@ const cleanup = [];
 try {
   for (const server of serversToTest) {
     const home = (await call("shell_run", { server, command: 'printf %s "$HOME"' })).stdout.trim();
-    const base = `${home}/.mss-xfer-${runId}-${server}`;
+    const base = `${home}/.mss-xfer2-${runId}-${server}`;
     cleanup.push({ server, base });
     await call("shell_run", { server, command: `mkdir -p ${base}` });
 
-    // 1) single text file upload
-    const single = await call("upload", { server, localPath: local("single.txt"), remotePath: `${base}/single.txt` });
-    check(`[${server}] single text upload`, single.verified === true && single.files === 1, `bytes=${single.bytes}`);
-    const roundTrip = await call("download", { server, remotePath: `${base}/single.txt`, localPath: local(`down-${server}.txt`) });
-    check(`[${server}] single text download`, roundTrip.verified === true && readFileSync(local(`down-${server}.txt`), "utf8") === textPayload);
+    // single text file
+    const single = await call("upload", { server, localPath: local("single.txt"), remoteDir: base });
+    check(`[${server}] single text upload`, single.verified === true && single.path === `${base}/single.txt`, `bytes=${single.bytes}`);
+    const singleDown = local(`single-down-${server}`);
+    mkdirSync(singleDown, { recursive: true });
+    await call("download", { server, remotePath: `${base}/single.txt`, localDir: singleDown });
+    check(`[${server}] single text download`, readFileSync(join(singleDown, "single.txt"), "utf8") === textPayload);
 
-    // 2) binary file
-    const binary = await call("upload", { server, localPath: local("binary.bin"), remotePath: `${base}/binary.bin` });
-    check(`[${server}] binary upload`, binary.verified === true && binary.bytes === binaryPayload.length);
-    await call("download", { server, remotePath: `${base}/binary.bin`, localPath: local(`down-${server}.bin`) });
-    check(`[${server}] binary download`, readFileSync(local(`down-${server}.bin`)).equals(binaryPayload));
+    // binary
+    await call("upload", { server, localPath: local("binary.bin"), remoteDir: base });
+    const binaryDown = local(`binary-down-${server}`);
+    mkdirSync(binaryDown, { recursive: true });
+    await call("download", { server, remotePath: `${base}/binary.bin`, localDir: binaryDown });
+    check(`[${server}] binary round-trip`, readFileSync(join(binaryDown, "binary.bin")).equals(binaryPayload));
 
-    // 3) identical re-upload skipped
-    const again = await call("upload", { server, localPath: local("single.txt"), remotePath: `${base}/single.txt` });
+    // identical re-upload skipped
+    const again = await call("upload", { server, localPath: local("single.txt"), remoteDir: base });
     check(`[${server}] identical upload skipped`, again.skipped === true && again.bytes === 0);
 
-    // 4) multiple files: directory tree upload + download
-    const dirUp = await call("upload", { server, localPath: treeRoot, remotePath: `${base}/tree` });
-    check(`[${server}] directory upload`, dirUp.files === 4 && dirUp.verified === true, `files=${dirUp.files}`);
+    // directory tree into explicit parent
+    const dirUp = await call("upload", { server, localPath: treeRoot, remoteDir: base });
+    check(`[${server}] directory upload`, dirUp.files === 4 && dirUp.path === `${base}/tree`);
     const remoteCount = await call("shell_run", { server, command: `find ${base}/tree -type f | wc -l` });
     check(`[${server}] remote tree file count`, Number(remoteCount.stdout.trim()) === 4);
-    const localTreeDown = local(`tree-down-${server}`);
-    const dirDown = await call("download", { server, remotePath: `${base}/tree`, localPath: localTreeDown });
-    const downloaded = readdirSync(localTreeDown, { recursive: true }).filter((entry) => statSync(join(localTreeDown, entry)).isFile());
-    check(`[${server}] directory download`, dirDown.files === 4 && downloaded.length === 4, `local=${downloaded.length}`);
+    const treeDown = local(`tree-down-${server}`);
+    mkdirSync(treeDown, { recursive: true });
+    const dirDown = await call("download", { server, remotePath: `${base}/tree`, localDir: treeDown });
+    const downloaded = readdirSync(join(treeDown, "tree"), { recursive: true }).filter((entry) =>
+      statSync(join(treeDown, "tree", entry)).isFile(),
+    );
+    check(`[${server}] directory download`, dirDown.path === join(treeDown, "tree") && downloaded.length === 4);
     check(
       `[${server}] nested content matches`,
-      readFileSync(join(localTreeDown, "sub", "deep", "d.bin")).equals(readFileSync(join(treeRoot, "sub", "deep", "d.bin"))),
+      readFileSync(join(treeDown, "tree", "sub", "deep", "d.bin")).equals(readFileSync(join(treeRoot, "sub", "deep", "d.bin"))),
     );
 
-    // 5) several individual files into one remote directory
-    await call("shell_run", { server, command: `mkdir -p ${base}/many` });
+    // several individual files into one explicit parent
+    for (const name of ["one.txt", "two.txt", "three.txt"]) writeFileSync(local(name), `${name} ${runId}\n`, "utf8");
+    const manyDir = local(`many-${server}`);
+    mkdirSync(manyDir, { recursive: true });
     for (const name of ["one.txt", "two.txt", "three.txt"]) {
-      writeFileSync(local(name), `${name} ${runId}\n`, "utf8");
+      await call("upload", { server, localPath: local(name), remoteDir: `${base}/many` });
     }
-    const many = [];
-    for (const name of ["one.txt", "two.txt", "three.txt"]) {
-      many.push(await call("upload", { server, localPath: local(name), remotePath: `${base}/many/${name}` }));
-    }
-    check(`[${server}] three separate uploads`, many.every((entry) => entry.verified === true));
-    const manyDown = await call("download", { server, remotePath: `${base}/many`, localPath: local(`many-down-${server}`) });
-    check(`[${server}] multi-file download`, manyDown.files === 3, `files=${manyDown.files}`);
+    const manyDown = await call("download", { server, remotePath: `${base}/many`, localDir: manyDir });
+    check(`[${server}] multi-file download`, manyDown.path === join(manyDir, "many") && manyDown.files === 3);
 
-    // 6) overwrite guard
+    // overwrite guard using the same basename from another folder
+    const altDir = local(`alt-${server}`);
+    mkdirSync(altDir, { recursive: true });
     const collision = Buffer.from(readFileSync(local("single.txt")));
     collision[0] = collision[0] === 65 ? 66 : 65;
-    writeFileSync(local("collision.txt"), collision);
+    writeFileSync(join(altDir, "single.txt"), collision);
     let guarded = false;
     try {
-      await call("upload", { server, localPath: local("collision.txt"), remotePath: `${base}/single.txt` });
+      await call("upload", { server, localPath: join(altDir, "single.txt"), remoteDir: base });
     } catch (error) {
       guarded = /overwrite/i.test(String(error.message));
     }
     check(`[${server}] overwrite guard`, guarded);
-    const forced = await call("upload", { server, localPath: local("collision.txt"), remotePath: `${base}/single.txt`, overwrite: true });
+    const forced = await call("upload", { server, localPath: join(altDir, "single.txt"), remoteDir: base, overwrite: true });
     check(`[${server}] overwrite=true replaces`, forced.verified === true && forced.skipped === false);
 
-    // 7) upload resume from a .part file
-    const prefix = bigPayload.subarray(0, 512 * 1024);
-    writeFileSync(local("prefix.bin"), prefix);
-    await call("upload", { server, localPath: local("prefix.bin"), remotePath: `${base}/big.bin.part` });
-    const resumed = await call("upload", { server, localPath: local("big.bin"), remotePath: `${base}/big.bin` });
+    // upload resume from a remote .part (same basename staged manually)
+    writeFileSync(local("big.bin.part"), bigPayload.subarray(0, 512 * 1024));
+    await call("upload", { server, localPath: local("big.bin.part"), remoteDir: base });
+    const resumed = await call("upload", { server, localPath: local("big.bin"), remoteDir: base });
     check(`[${server}] upload resumes from .part`, resumed.resumed === true, `bytes=${resumed.bytes}`);
-    await call("download", { server, remotePath: `${base}/big.bin`, localPath: local(`big-down-${server}.bin`) });
-    check(`[${server}] resumed upload content intact`, readFileSync(local(`big-down-${server}.bin`)).equals(bigPayload));
 
-    // 8) download resume from a local .part
-    writeFileSync(local(`big2-${server}.bin.part`), prefix);
-    const downResumed = await call("download", { server, remotePath: `${base}/big.bin`, localPath: local(`big2-${server}.bin`) });
-    check(`[${server}] download resumes from local .part`, downResumed.resumed === true, `bytes=${downResumed.bytes}`);
-    check(`[${server}] resumed download content intact`, readFileSync(local(`big2-${server}.bin`)).equals(bigPayload));
+    // download resume from a local .part
+    const bigDownDir = local(`big-down-${server}`);
+    mkdirSync(bigDownDir, { recursive: true });
+    writeFileSync(join(bigDownDir, "big.bin.part"), bigPayload.subarray(0, 512 * 1024));
+    const downResumed = await call("download", { server, remotePath: `${base}/big.bin`, localDir: bigDownDir });
+    check(`[${server}] download resumes from local .part`, downResumed.resumed === true);
+    check(`[${server}] resumed content intact`, readFileSync(join(bigDownDir, "big.bin")).equals(bigPayload));
 
-    // 9) no .part leftovers on the remote side
     const leftovers = await call("shell_run", { server, command: `find ${base} -name '*.part' | wc -l` });
     check(`[${server}] no remote .part leftovers`, Number(leftovers.stdout.trim()) === 0);
 
-    // 10) missing remote file is a clear error
     let missing = "";
     try {
-      await call("download", { server, remotePath: `${base}/does-not-exist.bin`, localPath: local("nope.bin") });
+      await call("download", { server, remotePath: `${base}/does-not-exist.bin`, localDir: local(`missing-${server}`) });
     } catch (error) {
       missing = String(error.message);
     }
     check(`[${server}] missing download errors clearly`, /not found/i.test(missing), missing.slice(0, 60));
+
+    // explicit parent is required
+    let missingParent = "";
+    try {
+      await call("upload", { server, localPath: local("single.txt") });
+    } catch (error) {
+      missingParent = String(error.message);
+    }
+    check(`[${server}] upload requires remoteDir`, /remoteDir/i.test(missingParent));
   }
 } catch (error) {
   check("run completed without throwing", false, error?.message ?? String(error));

@@ -329,8 +329,7 @@ export function registerTools(
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         localPath: { type: "string", required: true, description: "Absolute local file or directory path." },
-        remoteDir: { type: "string", description: "Absolute remote parent directory; the source basename is appended (preferred)." },
-        remotePath: { type: "string", description: "Legacy: full remote destination path; use remoteDir instead." },
+        remoteDir: { type: "string", required: true, description: "Absolute remote parent directory; the source basename is appended." },
         overwrite: { type: "boolean", description: "Replace files with different content." },
         background: { type: "boolean", description: "Run in the background; read progress with job_output and cancel with job_kill." },
         chunkSize: { type: "number", description: "Transfer chunk size in bytes; defaults adapt to file size." },
@@ -339,8 +338,8 @@ export function registerTools(
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
-        if (!args.remoteDir && !args.remotePath) throw new MultiserversError("upload needs remoteDir (parent directory)");
-        const remotePath = args.remotePath ?? posix.join(args.remoteDir!, posix.basename(args.localPath.replaceAll(String.fromCharCode(92), "/")));
+        if (!args.remoteDir) throw new MultiserversError("upload needs remoteDir (parent directory on the server)");
+        const remotePath = posix.join(args.remoteDir, posix.basename(args.localPath.replaceAll(String.fromCharCode(92), "/")));
         const options = {
           overwrite: Boolean(args.overwrite),
           signal: exec.signal,
@@ -367,8 +366,7 @@ export function registerTools(
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         remotePath: { type: "string", required: true, description: "Absolute remote file or directory path." },
-        localDir: { type: "string", description: "Absolute local parent directory; the source basename is appended (preferred)." },
-        localPath: { type: "string", description: "Legacy: full local destination path; use localDir instead." },
+        localDir: { type: "string", required: true, description: "Absolute local parent directory; the source basename is appended." },
         overwrite: { type: "boolean", description: "Replace files with different content." },
         background: { type: "boolean", description: "Run in the background; read progress with job_output and cancel with job_kill." },
         chunkSize: { type: "number", description: "Transfer chunk size in bytes; defaults adapt to file size." },
@@ -377,8 +375,8 @@ export function registerTools(
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
-        if (!args.localDir && !args.localPath) throw new MultiserversError("download needs localDir (parent directory)");
-        const localPath = args.localPath ?? join(args.localDir!, basename(args.remotePath));
+        if (!args.localDir) throw new MultiserversError("download needs localDir (parent directory on this machine)");
+        const localPath = join(args.localDir, basename(args.remotePath));
         const options = {
           overwrite: Boolean(args.overwrite),
           signal: exec.signal,
@@ -424,10 +422,7 @@ export function registerTools(
         try {
           const parsed = JSON.parse(args.items);
           if (!Array.isArray(parsed)) throw new Error("not an array");
-          items = parsed.map((entry: { source?: string; targetDir?: string; localPath?: string; remotePath?: string }) => {
-            if (entry && typeof entry.localPath === "string" && typeof entry.remotePath === "string") {
-              return { localPath: entry.localPath, remotePath: entry.remotePath };
-            }
+          items = parsed.map((entry: { source?: string; targetDir?: string }) => {
             if (!entry || typeof entry.source !== "string" || typeof entry.targetDir !== "string") {
               throw new Error("each entry needs source and targetDir strings");
             }

@@ -4,7 +4,8 @@
  * Env: MSS_BIG_MB (default 512), MSS_BIG_SERVER (default wxj-94).
  */
 import { createHash } from "node:crypto";
-import { closeSync, createReadStream, existsSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
+const require_mkdir = (dir) => mkdirSync(dir, { recursive: true });
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import * as plugin from "../lib/index.js";
@@ -85,8 +86,9 @@ const sha = (path) =>
 const human = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
 const work = mkdtempSync(join(tmpdir(), "mss-big-"));
-const localPath = join(work, `big-${sizeMb}mb.bin`);
-const downloadPath = join(work, `big-${sizeMb}mb.download.bin`);
+const localPath = join(work, "big.bin");
+const downloadDir = join(work, "download");
+require_mkdir(downloadDir);
 const block = Buffer.alloc(8 * 1024 * 1024, 7);
 const handle = openSync(localPath, "w");
 for (let index = 0; index < sizeMb / 8; index += 1) writeSync(handle, block);
@@ -106,7 +108,7 @@ try {
   setTimeout(() => controller.abort(), 400);
   let cancelError = "";
   try {
-    await call("upload", { server: serverId, localPath, remotePath }, controller.signal);
+    await call("upload", { server: serverId, localPath, remoteDir: base }, controller.signal);
   } catch (error) {
     cancelError = String(error.message);
   }
@@ -117,25 +119,25 @@ try {
 
   // 2) resume from a pre-created partial .part
   const prefix = Buffer.concat([block, block, block, block]); // 32 MB
-  const prefixPath = join(work, "prefix.bin");
+  const prefixPath = join(work, "big.bin.part");
   writeFileSync(prefixPath, prefix);
-  await call("upload", { server: serverId, localPath: prefixPath, remotePath: `${remotePath}.part` });
+  await call("upload", { server: serverId, localPath: prefixPath, remoteDir: base });
 
   // 3) full upload with adaptive chunking (resumes the .part)
-  const upload = await call("upload", { server: serverId, localPath, remotePath });
+  const upload = await call("upload", { server: serverId, localPath, remoteDir: base });
   check("large upload completes", upload.verified === true && upload.bytes > 0, `${human(upload.bytes)} · ${upload.durationMs} ms · ${upload.throughputMBps} MB/s`);
   check("upload resumed from the partial .part", upload.resumed === true);
 
   // 3) large download
-  const download = await call("download", { server: serverId, remotePath, localPath: downloadPath });
+  const download = await call("download", { server: serverId, remotePath, localDir: downloadDir });
   check("large download completes", download.verified === true, `${human(download.bytes)} · ${download.durationMs} ms · ${download.throughputMBps} MB/s`);
   const remoteSha = /^([0-9a-f]{64})/m.exec((await call("shell_run", { server: serverId, command: `sha256sum ${remotePath}` })).stdout)?.[1] ?? "";
   check("remote sha256 matches local", remoteSha === localSha, `${String(remoteSha).slice(0, 12)}…`);
-  check("downloaded bytes match", (await sha(downloadPath)) === localSha);
+  check("downloaded bytes match", (await sha(join(downloadDir, "big.bin"))) === localSha);
 
   // 4) explicit chunkSize override still works (skipped for very large fixtures)
   if (sizeMb <= 256) {
-    const chunked = await call("upload", { server: serverId, localPath, remotePath: `${base}/big-chunked.bin`, chunkSize: 4 * 1024 * 1024 });
+    const chunked = await call("upload", { server: serverId, localPath, remoteDir: `${base}/chunked`, chunkSize: 4 * 1024 * 1024 });
     check("explicit chunkSize accepted", chunked.verified === true, `chunk=4MB · ${chunked.throughputMBps} MB/s`);
   }
 

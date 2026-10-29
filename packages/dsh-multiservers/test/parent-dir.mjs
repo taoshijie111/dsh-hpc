@@ -124,9 +124,14 @@ try {
   });
   check("queue upload targetDir semantics", queue.failed === 0 && queue.files === 2, `files=${queue.files}`);
 
-  // legacy full-path params still accepted
-  const legacyUp = await call("upload", { server: serverId, localPath: join(work, "single.txt"), remotePath: `${base}/legacy/name.txt` });
-  check("legacy remotePath still accepted", legacyUp.path === `${base}/legacy/name.txt` && legacyUp.verified === true);
+  // a full destination path without the parent parameter is rejected
+  let legacyRejected = "";
+  try {
+    await call("upload", { server: serverId, localPath: join(work, "single.txt"), remotePath: `${base}/legacy/name.txt` });
+  } catch (error) {
+    legacyRejected = String(error.message);
+  }
+  check("upload without remoteDir is rejected", /remoteDir/.test(legacyRejected));
 
   // missing parent parameter is rejected clearly
   let missing = "";

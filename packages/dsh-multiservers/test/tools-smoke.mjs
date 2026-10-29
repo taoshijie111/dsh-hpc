@@ -54,15 +54,17 @@ const call = (name, args) => {
 
 const work = mkdtempSync(join(tmpdir(), "mss-v3-"));
 const localUp = join(work, "up.txt");
-const localDown = join(work, "down.txt");
+const downloadDir = join(work, "downloaded");
+const localDown = join(downloadDir, "up.txt");
 const dirUp = join(work, "tree");
 mkdirSync(join(dirUp, "sub"), { recursive: true });
 writeFileSync(join(dirUp, "a.txt"), "alpha\n", "utf8");
 writeFileSync(join(dirUp, "sub", "b.txt"), "beta\n", "utf8");
 const payload = `v3 ${new Date().toISOString()}\n`.repeat(3);
 writeFileSync(localUp, payload, "utf8");
-const remoteFile = `${home}/.mss-v3-${process.pid}.txt`;
-const remoteDir = `${home}/.mss-v3-tree-${process.pid}`;
+const remoteRoot = `${home}/.mss-tools-${process.pid}`;
+const remoteFile = `${remoteRoot}/up.txt`;
+const treeRemote = `${remoteRoot}/tree`;
 const localDirDown = join(work, "tree-down");
 
 try {
@@ -89,23 +91,23 @@ try {
   const big = await call("shell_run", { server: "hpc1", command: "head -c 300000 /dev/zero | tr '\\0' x", maxBytes: 4096 });
   check("shell_run truncates large output", big.truncated === true && big.stdout.length < 5000, `chars=${big.stdout.length}`);
 
-  const up = await call("upload", { server: "hpc1", localPath: localUp, remotePath: remoteFile });
+  const up = await call("upload", { server: "hpc1", localPath: localUp, remoteDir: remoteRoot });
   check("upload verifies and stages atomically", up.verified === true && up.files === 1, `bytes=${up.bytes}`);
   const part = await call("shell_run", { server: "hpc1", command: `test -e ${remoteFile}.part || echo NOPART` });
   check("no .part file remains after upload", part.stdout.includes("NOPART"));
 
-  const again = await call("upload", { server: "hpc1", localPath: localUp, remotePath: remoteFile });
+  const again = await call("upload", { server: "hpc1", localPath: localUp, remoteDir: remoteRoot });
   check("identical re-upload is skipped", again.skipped === true && again.bytes === 0);
 
-  const dirUpResult = await call("upload", { server: "hpc1", localPath: dirUp, remotePath: remoteDir });
+  const dirUpResult = await call("upload", { server: "hpc1", localPath: dirUp, remoteDir: remoteRoot });
   check("directory upload transfers every file", dirUpResult.files === 2, `files=${dirUpResult.files}`);
-  const count = await call("shell_run", { server: "hpc1", command: `find ${remoteDir} -type f | wc -l` });
+  const count = await call("shell_run", { server: "hpc1", command: `find ${treeRemote} -type f | wc -l` });
   check("remote directory matches", Number(count.stdout.trim()) === 2, count.stdout.trim());
 
-  const dirDown = await call("download", { server: "hpc1", remotePath: remoteDir, localPath: localDirDown });
-  check("directory download transfers every file", dirDown.files === 2 && readFileSync(join(localDirDown, "sub", "b.txt"), "utf8") === "beta\n");
+  const dirDown = await call("download", { server: "hpc1", remotePath: treeRemote, localDir: localDirDown });
+  check("directory download transfers every file", dirDown.files === 2 && readFileSync(join(localDirDown, "tree", "sub", "b.txt"), "utf8") === "beta\n");
 
-  const down = await call("download", { server: "hpc1", remotePath: remoteFile, localPath: localDown });
+  const down = await call("download", { server: "hpc1", remotePath: remoteFile, localDir: downloadDir });
   check("single download verifies", down.verified === true && readFileSync(localDown, "utf8") === payload);
 
   const forward = await call("forward", { server: "hpc1", remoteHost: "127.0.0.1", remotePort: 22, localPort: 0 });
@@ -124,7 +126,7 @@ try {
   const closed = await call("forward", { server: "hpc1", localPort: forward.localPort, close: true });
   check("forward can be closed", closed.closed === true);
 
-  await call("shell_run", { server: "hpc1", command: `rm -f ${remoteFile}; rm -rf ${remoteDir}` });
+  await call("shell_run", { server: "hpc1", command: `rm -rf ${remoteRoot}` });
   const disconnect = await call("server_disconnect", { server: "hpc1" });
   const finalList = await call("server_list", {});
   check("disconnect clears connection", disconnect.disconnected === true && finalList.servers[0].connected === false);
