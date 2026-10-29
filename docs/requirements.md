@@ -258,6 +258,17 @@
 | 调优前 | 下载 ~4–5 MB/s → **56 MB/s**；上传 ~5 MB/s → **33 MB/s** |
 | 测试 | `npm run test:transfer:big`（`MSS_BIG_MB` 可调，默认 512） |
 
+### 9.9 传输队列（v1.9.3）
+
+| 项 | 实现 |
+| --- | --- |
+| 工具 | 新增 `transfer_queue`（第 16 个工具）：`direction` + `items`（JSON 数组 `{localPath, remotePath}`）+ `overwrite/chunkSize/continueOnError/background` |
+| 执行模型 | 默认注册为 DSH 后台任务，顺序处理每个条目；`job_output` 看每项/每块进度，`job_kill` 取消；结束时推送完成通知 |
+| 失败策略 | `continueOnError` 默认 true：单项失败继续，摘要含每项结果与错误；false 时遇到首个失败即停 |
+| 无后台服务时 | 自动退化为同步执行并返回完整摘要（测试环境可用） |
+| 目录条目 | 目录递归传输；单文件上传自动 `mkdir -p` 远端父目录（此前缺失会导致 "No such file"） |
+| 实测 | 前台队列 9/9（3 文件+目录+新建嵌套目录、失败继续/停止、非法 JSON）；headless 真实后台队列：`mss-transfer-11850a8c69f342f6`，3 项 3 文件 failed=0，完成通知送达 |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。

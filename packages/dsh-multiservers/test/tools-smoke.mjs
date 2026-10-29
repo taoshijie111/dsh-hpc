@@ -66,8 +66,8 @@ const remoteDir = `${home}/.mss-v3-tree-${process.pid}`;
 const localDirDown = join(work, "tree-down");
 
 try {
-  check("15 tools registered", registered.size === 15, `count=${registered.size}`);
-  check("job tools are present", ["job_submit", "job_status", "job_logs", "job_cancel", "job_wait"].every((n) => registered.has(n)));
+  check("16 tools registered", registered.size === 16, `count=${registered.size}`);
+  check("job tools are present", ["job_submit", "job_status", "job_logs", "job_cancel", "job_wait", "transfer_queue"].every((n) => registered.has(n)));
   check("merged tools are gone", ["server_status", "session_list", "shell_open", "server_probe", "server_connect"].every((n) => !registered.has(n)));
   check("command wrappers are gone", ["run", "ls", "stat", "mkdir", "rm"].every((n) => !registered.has(n)));
 

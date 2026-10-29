@@ -6,7 +6,7 @@ Exposes 12 tools to the model — server registry, connectivity/host-key checks,
 command execution, SFTP file operations and transfers. No separate UI, no daemon: the plugin runs
 inside DSH and stores passwords in DSH's own credential store (the same place provider API keys live).
 
-## Tools (14)
+## Tools (16)
 
 | Group | Tool | Purpose |
 | --- | --- | --- |
@@ -16,9 +16,9 @@ inside DSH and stores passwords in DSH's own credential store (the same place pr
 | | `server_disconnect` | Close sessions, forwards and the connection |
 | Shell | `shell_run` | Named sticky session (created on demand); capped output; timeout resets only that session |
 | | `shell_close` | Close one named session |
-| Transfer | `upload` / `download` | File or directory tree; `.part` staging + sha256, resume from partial size |
+| Transfer | `upload` / `download` / `transfer_queue` | File or directory tree; `.part` staging + sha256, resume from partial size |
 | Network | `forward` | Local TCP forward through the pooled connection (Jupyter/TensorBoard) |
-| Jobs | `job_submit` / `job_status` / `job_logs` / `job_wait` / `job_cancel` | Long-running jobs: Slurm (`sbatch`, `squeue`/`sacct`, `scancel`) or bare metal (`setsid`+`nohup`, pid + exit-code file). Server `kind: auto` detects and caches the backend; `schedulerDefaults` supply partition/account/qos/time/cpus/mem/gpus; scripts and logs live under `jobRoot`. Transfers cover single files, directory trees, binary content, `.part` resume in both directions and an overwrite guard (`test:transfer`). Large transfers: chunk size adapts to file size (256 KB → 8 MB), results report `durationMs`/`throughputMBps`, `background: true` runs the transfer as a DSH background job (progress via `job_output`, cancel via `job_kill`), and downloads use pipelined `fastGet`. `test:transfer:big` benchmarks GB-scale files. `job_submit` also starts a host-side watcher (a DSH background job owned by the session) that polls only job state with adaptive backoff — no remote sampler, no growing watch logs — and the session receives a completion notice when the job ends. |
+| Jobs | `job_submit` / `job_status` / `job_logs` / `job_wait` / `job_cancel` | Long-running jobs: Slurm (`sbatch`, `squeue`/`sacct`, `scancel`) or bare metal (`setsid`+`nohup`, pid + exit-code file). Server `kind: auto` detects and caches the backend; `schedulerDefaults` supply partition/account/qos/time/cpus/mem/gpus; scripts and logs live under `jobRoot`. Transfers cover single files, directory trees, binary content, `.part` resume in both directions and an overwrite guard (`test:transfer`). Large transfers: chunk size adapts to file size (256 KB → 8 MB), results report `durationMs`/`throughputMBps`, `background: true` runs the transfer as a DSH background job (progress via `job_output`, cancel via `job_kill`), and downloads use pipelined `fastGet`. `test:transfer:big` benchmarks GB-scale files. `transfer_queue` runs a batch of file/directory items sequentially (background job by default, per-item progress, one failure does not stop the queue, single-file uploads auto-create parent directories); `test:transfer:queue` covers it. `job_submit` also starts a host-side watcher (a DSH background job owned by the session) that polls only job state with adaptive backoff — no remote sampler, no growing watch logs — and the session receives a completion notice when the job ends. |
 
 Authentication: password or key, plus an optional key passphrase credential; keyboard-interactive
 (multi-factor) prompts are answered with the same stored secret. Connections are pooled; sessions

@@ -273,6 +273,8 @@ export async function uploadWithResume(
   if (!existsSync(localPath)) throw new MultiserversError(`Local path not found: ${localPath}`);
   return withSftp(client, async (sftp) => {
     if (!statSync(localPath).isDirectory()) {
+      // A single file may target a directory that does not exist yet.
+      await mkdirRemote(sftp, posix.dirname(remotePath));
       return { path: remotePath, files: 1, ...(await uploadFile(client, sftp, localPath, remotePath, options)) };
     }
 

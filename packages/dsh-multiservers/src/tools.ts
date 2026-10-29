@@ -8,7 +8,7 @@ import type { SessionRegistry } from "./core/session.js";
 import { execRemote, passwordRefFor } from "./core/ssh.js";
 import { cancelJob, loadJob, queryJobs, readJobLogs, saveJob, submitJob } from "./core/jobs.js";
 import { startJobWatcher } from "./core/watch.js";
-import { startTransferJob } from "./core/transfer-job.js";
+import { runTransferQueue, startTransferJob, startTransferQueueJob, type QueueItem } from "./core/transfer-job.js";
 import { MultiserversError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
 
 const text = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }];
@@ -386,6 +386,62 @@ export function registerTools(
         const result = await downloadWithResume(state.client, args.remotePath, args.localPath, options);
         const durationMs = Date.now() - started;
         return jsonSafe({ server: server.id, ...result, durationMs, throughputMBps: result.bytes > 0 ? Math.round((result.bytes / (1024 * 1024) / (durationMs / 1000)) * 10) / 10 : 0 });
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "transfer_queue",
+      description:
+        "Batch transfer queue: upload or download several files/directories in order. Runs as a DSH background job by default (progress via job_output, cancel via job_kill, completion notice); one failed item does not stop the queue unless continueOnError=false. Directory items are copied recursively.",
+      parameters: {
+        server: { type: "string", required: true, description: "Server id from server_list." },
+        direction: { type: "string", enum: ["upload", "download"], required: true, description: "upload = local -> remote, download = remote -> local." },
+        items: {
+          type: "string",
+          required: true,
+          description: 'JSON array of queue entries, e.g. [{"localPath":"/local/a","remotePath":"/remote/a"}].',
+        },
+        overwrite: { type: "boolean", description: "Replace files with different content." },
+        chunkSize: { type: "number", description: "Transfer chunk size in bytes." },
+        continueOnError: { type: "boolean", description: "Keep going after one failed item; defaults to true." },
+        background: { type: "boolean", description: "Run as a DSH background job; defaults to true." },
+      },
+      output: objectOutput,
+      async execute(args, exec) {
+        const server = findServer(getConfig(), args.server);
+        const state = await pool.ensure(ctx, server);
+        let items: QueueItem[];
+        try {
+          const parsed = JSON.parse(args.items);
+          if (!Array.isArray(parsed)) throw new Error("not an array");
+          items = parsed.map((entry: { localPath?: string; remotePath?: string }) => {
+            if (!entry || typeof entry.localPath !== "string" || typeof entry.remotePath !== "string") {
+              throw new Error("each entry needs localPath and remotePath strings");
+            }
+            return { localPath: entry.localPath, remotePath: entry.remotePath };
+          });
+        } catch (error) {
+          throw new MultiserversError(`items must be a JSON array of {localPath, remotePath}: ${(error as Error).message}`);
+        }
+        if (items.length === 0) throw new MultiserversError("items must contain at least one entry");
+        const direction = (args.direction === "download" ? "download" : "upload") as "upload" | "download";
+        const continueOnError = args.continueOnError !== false;
+        const options = {
+          overwrite: Boolean(args.overwrite),
+          signal: exec.signal,
+          ...(args.chunkSize ? { chunkSize: args.chunkSize } : {}),
+        };
+        if (args.background !== false) {
+          const started = startTransferQueueJob(ctx, exec.agent, state.client, direction, items, options, continueOnError);
+          if (started.jobId) {
+            return jsonSafe({ server: server.id, background: true, jobId: started.jobId, direction, count: items.length });
+          }
+        }
+        const startedAt = Date.now();
+        const summary = await runTransferQueue(state.client, direction, items, options, { continueOnError });
+        return jsonSafe({ server: server.id, direction, durationMs: Date.now() - startedAt, ...summary });
       },
     }),
   );
