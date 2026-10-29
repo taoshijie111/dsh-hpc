@@ -50,6 +50,7 @@ export function startJobWatcher(
   getServers: () => ServerSpec[],
   recordId: string,
   agent?: { sessionId?: string; ctx?: unknown },
+  quiet = false,
 ): WatchOutcome {
   // Service access must not throw: property access on a non-injected service
   // raises inside Cordis, which would abort job_submit after the job started.
@@ -68,7 +69,7 @@ export function startJobWatcher(
   if (root?.start && root !== agentJobs) candidates.push({ service: root, scope: "host" });
   if (candidates.length === 0) {
     const message = "background job service is not mounted";
-    console.error(`[multiservers] watcher unavailable: ${message}`);
+    if (!quiet) console.error(`[multiservers] watcher unavailable: ${message}`);
     return { error: message };
   }
   const agentLike = agent as { sessionId?: string; session?: { id?: string } } | undefined;
@@ -138,13 +139,13 @@ export function startJobWatcher(
   for (const candidate of candidates) {
     try {
       const id = start(candidate.service, undefined);
-      console.error(`[multiservers] watcher registered unowned: ${errors.join(" | ")}`);
+      if (!quiet) console.error(`[multiservers] watcher registered unowned: ${errors.join(" | ")}`);
       return { id, ownerBound: false, error: errors.join(" | ") };
     } catch (error) {
       errors.push(`${candidate.scope}/unowned: ${(error as Error).message}`);
     }
   }
-  console.error(`[multiservers] watcher registration failed: ${errors.join(" | ")}`);
+  if (!quiet) console.error(`[multiservers] watcher registration failed: ${errors.join(" | ")}`);
   return { error: errors.join(" | ") };
 }
 
@@ -157,7 +158,7 @@ export function resumeWatchers(
   let count = 0;
   for (const record of listJobs()) {
     if (isTerminal(record.state) || record.watchJobId) continue;
-    if (startJobWatcher(ctx, pool, getServers, record.id).id) count += 1;
+    if (startJobWatcher(ctx, pool, getServers, record.id, undefined, true).id) count += 1;
   }
   return count;
 }
