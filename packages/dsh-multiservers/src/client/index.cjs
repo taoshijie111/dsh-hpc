@@ -281,7 +281,7 @@ window.__ModuleLoader__.load({
         );
       });
 
-      const form = !formOpen
+      const formPanel = !formOpen
         ? null
         : h(
             "div",
@@ -366,7 +366,7 @@ window.__ModuleLoader__.load({
         ),
         h("p", { style: css.lead }, "管理 agent 可操作的远端机器。"),
         servers.length === 0 && !formOpen ? h("div", { style: css.empty }, "还没有服务器。") : null,
-        form,
+        formPanel,
         rows,
         status ? h("div", { style: css.status }, status) : null,
       );
