@@ -42,7 +42,8 @@
     "test:session": "node test/session-smoke.mjs",
     "test:transfer": "node test/transfer-smoke.mjs",
     "test:transfer:big": "node test/transfer-big.mjs",
-    "test:transfer:queue": "node test/transfer-queue.mjs"
+    "test:transfer:queue": "node test/transfer-queue.mjs",
+    "test:parent-dir": "node test/parent-dir.mjs"
   },
   "dependencies": {
     "ssh2": "^1.17.0"

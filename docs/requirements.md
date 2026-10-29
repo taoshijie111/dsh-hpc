@@ -269,6 +269,16 @@
 | 目录条目 | 目录递归传输；单文件上传自动 `mkdir -p` 远端父目录（此前缺失会导致 "No such file"） |
 | 实测 | 前台队列 9/9（3 文件+目录+新建嵌套目录、失败继续/停止、非法 JSON）；headless 真实后台队列：`mss-transfer-11850a8c69f342f6`，3 项 3 文件 failed=0，完成通知送达 |
 
+### 9.10 传输父目录语义（v1.9.4）
+
+| 项 | 实现 |
+| --- | --- |
+| 参数 | `upload(localPath, remoteDir)`、`download(remotePath, localDir)`：目标 = 父目录 + 来源 basename；父目录必须由调用方显式给出 |
+| 队列 | `transfer_queue` 条目改为 `{source, targetDir}`（上传 targetDir=远端父目录，下载 targetDir=本地父目录） |
+| 行为 | 不再从来源路径自动推导目标父目录；显式给出的父目录不存在时创建；缺失父目录参数会明确报错 |
+| 兼容 | 旧的全路径参数 `remotePath`/`localPath`/`{localPath,remotePath}` 仍接受 |
+| 验证 | `test/parent-dir.mjs` 8/8：文件/目录上传下载的 basename 追加、队列 targetDir、旧参数兼容、缺参报错 |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。

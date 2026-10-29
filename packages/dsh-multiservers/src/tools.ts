@@ -1,4 +1,5 @@
 import { createServer, type Server as NetServer } from "node:net";
+import { basename, join, posix } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
@@ -324,12 +325,13 @@ export function registerTools(
     defineTool({
       name: "upload",
       description:
-        "Upload a local file or directory to the server. Directories are copied file-by-file. Each file stages as <target>.part and is renamed after sha256 verification; an existing smaller partial resumes from its size; different existing content is refused unless overwrite=true. Large datasets should already live on the server.",
+        "Upload one local file or directory into an explicit remote parent directory. The destination is <remoteDir>/<basename(localPath)>; remoteDir is created when missing. Existing identical content is skipped, different content is refused unless overwrite=true, and a smaller staging .part resumes. Large datasets should already live on the server.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         localPath: { type: "string", required: true, description: "Absolute local file or directory path." },
-        remotePath: { type: "string", required: true, description: "Absolute remote destination path." },
-        overwrite: { type: "boolean", description: "Replace existing files with different content." },
+        remoteDir: { type: "string", description: "Absolute remote parent directory; the source basename is appended (preferred)." },
+        remotePath: { type: "string", description: "Legacy: full remote destination path; use remoteDir instead." },
+        overwrite: { type: "boolean", description: "Replace files with different content." },
         background: { type: "boolean", description: "Run in the background; read progress with job_output and cancel with job_kill." },
         chunkSize: { type: "number", description: "Transfer chunk size in bytes; defaults adapt to file size." },
       },
@@ -337,18 +339,20 @@ export function registerTools(
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
+        if (!args.remoteDir && !args.remotePath) throw new MultiserversError("upload needs remoteDir (parent directory)");
+        const remotePath = args.remotePath ?? posix.join(args.remoteDir!, posix.basename(args.localPath.replaceAll(String.fromCharCode(92), "/")));
         const options = {
           overwrite: Boolean(args.overwrite),
           signal: exec.signal,
           ...(args.chunkSize ? { chunkSize: args.chunkSize } : {}),
         };
         if (args.background) {
-          const started = startTransferJob(ctx, exec.agent, state.client, "upload", { localPath: args.localPath, remotePath: args.remotePath }, options);
+          const started = startTransferJob(ctx, exec.agent, state.client, "upload", { localPath: args.localPath, remotePath }, options);
           if (!started.jobId) throw new MultiserversError(`background upload unavailable: ${started.error ?? "unknown error"}`);
-          return jsonSafe({ server: server.id, background: true, jobId: started.jobId, localPath: args.localPath, remotePath: args.remotePath });
+          return jsonSafe({ server: server.id, background: true, jobId: started.jobId, localPath: args.localPath, remotePath });
         }
         const startedAt = Date.now();
-        const result = await uploadWithResume(state.client, args.localPath, args.remotePath, options);
+        const result = await uploadWithResume(state.client, args.localPath, remotePath, options);
         const durationMs = Date.now() - startedAt;
         return jsonSafe({ server: server.id, ...result, durationMs, throughputMBps: result.bytes > 0 ? Math.round((result.bytes / (1024 * 1024) / (durationMs / 1000)) * 10) / 10 : 0 });
       },
@@ -359,12 +363,13 @@ export function registerTools(
     defineTool({
       name: "download",
       description:
-        "Download a remote file or directory. Directories are copied file-by-file. Each file stages locally as <target>.part and is renamed after sha256 verification; a smaller local partial resumes; different existing content is refused unless overwrite=true. Use for results and small artifacts; leave large datasets on the server.",
+        "Download one remote file or directory into an explicit local parent directory. The destination is <localDir>/<basename(remotePath)>; localDir is created when missing. Existing identical content is skipped, different content is refused unless overwrite=true, and a smaller staging .part resumes.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         remotePath: { type: "string", required: true, description: "Absolute remote file or directory path." },
-        localPath: { type: "string", required: true, description: "Absolute local destination path." },
-        overwrite: { type: "boolean", description: "Replace existing local files with different content." },
+        localDir: { type: "string", description: "Absolute local parent directory; the source basename is appended (preferred)." },
+        localPath: { type: "string", description: "Legacy: full local destination path; use localDir instead." },
+        overwrite: { type: "boolean", description: "Replace files with different content." },
         background: { type: "boolean", description: "Run in the background; read progress with job_output and cancel with job_kill." },
         chunkSize: { type: "number", description: "Transfer chunk size in bytes; defaults adapt to file size." },
       },
@@ -372,19 +377,21 @@ export function registerTools(
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
+        if (!args.localDir && !args.localPath) throw new MultiserversError("download needs localDir (parent directory)");
+        const localPath = args.localPath ?? join(args.localDir!, basename(args.remotePath));
         const options = {
           overwrite: Boolean(args.overwrite),
           signal: exec.signal,
           ...(args.chunkSize ? { chunkSize: args.chunkSize } : {}),
         };
         if (args.background) {
-          const started = startTransferJob(ctx, exec.agent, state.client, "download", { localPath: args.localPath, remotePath: args.remotePath }, options);
+          const started = startTransferJob(ctx, exec.agent, state.client, "download", { localPath, remotePath: args.remotePath }, options);
           if (!started.jobId) throw new MultiserversError(`background download unavailable: ${started.error ?? "unknown error"}`);
-          return jsonSafe({ server: server.id, background: true, jobId: started.jobId, remotePath: args.remotePath, localPath: args.localPath });
+          return jsonSafe({ server: server.id, background: true, jobId: started.jobId, remotePath: args.remotePath, localPath });
         }
-        const started = Date.now();
-        const result = await downloadWithResume(state.client, args.remotePath, args.localPath, options);
-        const durationMs = Date.now() - started;
+        const startedAt = Date.now();
+        const result = await downloadWithResume(state.client, args.remotePath, localPath, options);
+        const durationMs = Date.now() - startedAt;
         return jsonSafe({ server: server.id, ...result, durationMs, throughputMBps: result.bytes > 0 ? Math.round((result.bytes / (1024 * 1024) / (durationMs / 1000)) * 10) / 10 : 0 });
       },
     }),
@@ -401,7 +408,7 @@ export function registerTools(
         items: {
           type: "string",
           required: true,
-          description: 'JSON array of queue entries, e.g. [{"localPath":"/local/a","remotePath":"/remote/a"}].',
+          description: 'JSON array of entries: [{"source":"...","targetDir":"..."}]. For upload source is local and targetDir is the remote parent; for download source is remote and targetDir is the local parent. The source basename is appended.',
         },
         overwrite: { type: "boolean", description: "Replace files with different content." },
         chunkSize: { type: "number", description: "Transfer chunk size in bytes." },
@@ -412,21 +419,33 @@ export function registerTools(
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
+        const direction = (args.direction === "download" ? "download" : "upload") as "upload" | "download";
         let items: QueueItem[];
         try {
           const parsed = JSON.parse(args.items);
           if (!Array.isArray(parsed)) throw new Error("not an array");
-          items = parsed.map((entry: { localPath?: string; remotePath?: string }) => {
-            if (!entry || typeof entry.localPath !== "string" || typeof entry.remotePath !== "string") {
-              throw new Error("each entry needs localPath and remotePath strings");
+          items = parsed.map((entry: { source?: string; targetDir?: string; localPath?: string; remotePath?: string }) => {
+            if (entry && typeof entry.localPath === "string" && typeof entry.remotePath === "string") {
+              return { localPath: entry.localPath, remotePath: entry.remotePath };
             }
-            return { localPath: entry.localPath, remotePath: entry.remotePath };
+            if (!entry || typeof entry.source !== "string" || typeof entry.targetDir !== "string") {
+              throw new Error("each entry needs source and targetDir strings");
+            }
+            if (direction === "upload") {
+              return {
+                localPath: entry.source,
+                remotePath: posix.join(entry.targetDir, posix.basename(entry.source.replaceAll(String.fromCharCode(92), "/"))),
+              };
+            }
+            return {
+              remotePath: entry.source,
+              localPath: join(entry.targetDir, basename(entry.source)),
+            };
           });
         } catch (error) {
-          throw new MultiserversError(`items must be a JSON array of {localPath, remotePath}: ${(error as Error).message}`);
+          throw new MultiserversError(`items must be a JSON array of {source, targetDir}: ${(error as Error).message}`);
         }
         if (items.length === 0) throw new MultiserversError("items must contain at least one entry");
-        const direction = (args.direction === "download" ? "download" : "upload") as "upload" | "download";
         const continueOnError = args.continueOnError !== false;
         const options = {
           overwrite: Boolean(args.overwrite),
