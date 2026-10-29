@@ -246,6 +246,14 @@ function percentOf(part: number, whole: number): number {
   return whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
 }
 
+/** Turn a raw 2FA auth error into an actionable message for the settings page. */
+function twoFactorMessage(message: string): string {
+  if (/verification code|keyboard-interactive/i.test(message)) {
+    return `${message} — this server needs a one-time verification code: ask the agent to run server_connect with the current code in the conversation, then retry.`;
+  }
+  return message;
+}
+
 /** Register the settings-page HTTP facade: status snapshot and on-demand resource sampling. */
 export function registerApi(
   webServer: WebServer,
@@ -293,15 +301,21 @@ export function registerApi(
       const serverId = url.searchParams.get("server") ?? "";
       try {
         const server = findServer(getConfig(), serverId);
-        // Manual sampling owns a dedicated connection: connect, sample, disconnect.
+        // Reuse the pooled connection when the agent already authenticated: 2FA
+        // servers cannot prompt for a code from the settings page. Otherwise own
+        // a temporary connection and close it after sampling.
         const started = Date.now();
-        const connection = await connect(ctxForApi, server, {
-          connectTimeoutMs: 15_000,
-          keepaliveIntervalMs: 0,
-          expectedFingerprint: server.hostKey ?? null,
-        });
+        const pooled = pool.get(server.id);
+        const own = pooled
+          ? null
+          : await connect(ctxForApi, server, {
+              connectTimeoutMs: 15_000,
+              keepaliveIntervalMs: 0,
+              expectedFingerprint: server.hostKey ?? null,
+            });
+        const client = pooled ? pooled.client : own!.client;
         try {
-          const result = await execRemote(connection.client, buildScript(), { timeoutMs: 30_000 });
+          const result = await execRemote(client, buildScript(), { timeoutMs: 30_000 });
           const raw = result.stdout;
           const nproc = Number(section(raw, "NPROC")) || 1;
           const login = {
@@ -371,14 +385,16 @@ export function registerApi(
             jobs: Number(section(raw, "JOBS").trim()) || 0,
           });
         } finally {
-          try {
-            connection.client.end();
-          } catch {
-            /* already closed */
+          if (own) {
+            try {
+              own.client.end();
+            } catch {
+              /* already closed */
+            }
           }
         }
       } catch (error) {
-        json(res, 502, { error: error instanceof HpcError ? error.message : String(error) });
+        json(res, 502, { error: error instanceof HpcError ? twoFactorMessage(error.message) : String(error) });
       }
     },
   });
@@ -397,13 +413,17 @@ export function registerApi(
           json(res, 200, { server: server.id, kind: server.kind, pinned: true, persisted: false });
           return;
         }
-        const connection = await connect(ctxForApi, server, {
-          connectTimeoutMs: 15_000,
-          keepaliveIntervalMs: 0,
-          expectedFingerprint: server.hostKey ?? null,
-        });
+        const pooled = pool.get(server.id);
+        const own = pooled
+          ? null
+          : await connect(ctxForApi, server, {
+              connectTimeoutMs: 15_000,
+              keepaliveIntervalMs: 0,
+              expectedFingerprint: server.hostKey ?? null,
+            });
+        const client = pooled ? pooled.client : own!.client;
         try {
-          const result = await execRemote(connection.client, DETECT_SCRIPT, { timeoutMs: 20_000 });
+          const result = await execRemote(client, DETECT_SCRIPT, { timeoutMs: 20_000 });
           const kind = (["slurm", "pbs", "lsf", "bare"].includes(result.stdout.trim()) ? result.stdout.trim() : "bare") as
             | "bare"
             | "slurm"
@@ -412,14 +432,16 @@ export function registerApi(
           const persisted = await persistResolvedKind(server.id, kind, config);
           json(res, 200, { server: server.id, kind, pinned: false, persisted });
         } finally {
-          try {
-            connection.client.end();
-          } catch {
-            /* already closed */
+          if (own) {
+            try {
+              own.client.end();
+            } catch {
+              /* already closed */
+            }
           }
         }
       } catch (error) {
-        json(res, 502, { error: error instanceof HpcError ? error.message : String(error) });
+        json(res, 502, { error: error instanceof HpcError ? twoFactorMessage(error.message) : String(error) });
       }
     },
   });

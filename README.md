@@ -7,7 +7,7 @@ one stateful, safe interface to heterogeneous remote machines — HPC clusters b
 bare-metal workstations, and plain SSH servers — instead of forcing it to assemble ad-hoc
 `ssh`/`scp`/`sbatch` incantations. Connections, shell state, long-running jobs, file
 transfers, forwarded ports, and credentials are managed by the plugin; the agent composes
-16 narrow tools, and a human manages servers from a DSH settings panel.
+17 narrow tools, and a human manages servers from a DSH settings panel.
 
 ## Why this exists
 
@@ -125,7 +125,7 @@ plane, remote work degrades into a sequence of fragile one-off shell calls:
 
 | Group | Tools | Purpose |
 | --- | --- | --- |
-| Servers | `server_list`, `server_add`, `server_remove`, `server_test`, `server_disconnect` | inventory, registration, reachability, fingerprint and scheduler detection |
+| Servers | `server_list`, `server_add`, `server_remove`, `server_test`, `server_connect`, `server_disconnect` | inventory, registration, reachability, fingerprint and scheduler detection |
 | Shell | `shell_run`, `shell_close` | named sticky sessions |
 | Jobs | `job_submit`, `job_status`, `job_logs`, `job_wait`, `job_cancel` | submit, reconcile, stream logs, wait or cancel |
 | Transfer | `upload`, `download`, `transfer_queue` | resumable file/directory/batch transfer |
@@ -182,6 +182,13 @@ job_submit(server: "login01", command: "python train.py", workdir: "/home/alice/
 # transfer a result directory back, explicitly into a local parent directory
 download(server: "login01", remotePath: "/home/alice/project/results", localDir: "D:/runs/07")
 ```
+
+### Two-factor authentication (6-digit codes)
+
+For keyboard-interactive 2FA servers the agent asks the user for the current code in the
+conversation and calls `server_connect(server, otp)`; that establishes the pooled SSH
+connection, so later tool calls and settings-page sampling reuse it without asking again.
+A new code is required only after the connection drops.
 
 ## Configuration
 

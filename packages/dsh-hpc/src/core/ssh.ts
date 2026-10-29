@@ -38,7 +38,18 @@ export type ConnectOptions = {
   keepaliveIntervalMs?: number;
   /** Fail unless the host key matches this pinned fingerprint. */
   expectedFingerprint?: string | null;
+  /** One-time verification code for keyboard-interactive (2FA) prompts. */
+  verificationCode?: string;
 };
+
+/** True when a keyboard-interactive prompt asks for a one-time verification code. */
+export function isVerificationPrompt(prompt: string): boolean {
+  const codeSignal =
+    /(verification|one[- ]?time|otp|authenticator|passcode|dynamic|token|code|验证码|动态码|动态|令牌)/i.test(prompt);
+  // "One-time password" is a code prompt; a plain password/passphrase prompt is not.
+  const passwordSignal = /password|passphrase|密码/i.test(prompt) && !/one[- ]?time/i.test(prompt);
+  return codeSignal && !passwordSignal;
+}
 
 export async function connect(ctx: Context, server: ServerSpec, options: ConnectOptions): Promise<Connection> {
   const client = new Client();
@@ -79,18 +90,32 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
       }
     }
   }
-  // Keyboard-interactive servers (MFA) receive the same secret for every prompt.
+  // Keyboard-interactive servers: answer password/passphrase prompts with the
+  // stored secret and verification-code prompts with the caller-supplied code.
   connectConfig.tryKeyboard = true;
+  let sawVerificationPrompt = false;
   client.on("keyboard-interactive", (_name, _instructions, _lang, prompts, finish) => {
-    finish(interactiveSecret ? prompts.map(() => interactiveSecret) : []);
+    const answers = prompts.map((rawPrompt: unknown) => {
+      const prompt = typeof rawPrompt === "string" ? rawPrompt : String((rawPrompt as { prompt?: string })?.prompt ?? "");
+      if (isVerificationPrompt(prompt)) {
+        sawVerificationPrompt = true;
+        return options.verificationCode ?? interactiveSecret ?? "";
+      }
+      return interactiveSecret ?? "";
+    });
+    finish(answers);
   });
 
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
       client.removeListener("ready", onReady);
+      const twoFactorHint =
+        sawVerificationPrompt && !options.verificationCode
+          ? ` Server "${server.id}" asks for one-time verification code (2FA): ask the user for the current 6-digit code, then retry with server_connect(server: "${server.id}", otp: "<code>").`
+          : "";
       reject(
         new HpcError(
-          `Connection to "${server.id}" (${server.host}:${server.port ?? 22}) failed: ${error.message}`,
+          `Connection to "${server.id}" (${server.host}:${server.port ?? 22}) failed: ${error.message}.${twoFactorHint}`,
         ),
       );
     };

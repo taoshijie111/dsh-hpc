@@ -218,13 +218,14 @@ export function registerTools(
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         profile: { type: "boolean", description: "Also collect the capability profile." },
+        otp: { type: "string", description: "One-time verification code (2FA) if the server requires it." },
       },
       output: objectOutput,
       async execute(args, exec) {
         const config = getConfig();
         const server = findServer(config, args.server);
         const started = Date.now();
-        const state = await pool.ensure(ctx, server);
+        const state = await pool.ensure(ctx, server, { ...(args.otp ? { verificationCode: args.otp } : {}) });
         const result: Record<string, any> = {
           server: server.id,
           reachable: state.alive,
@@ -259,6 +260,31 @@ export function registerTools(
           };
         }
         return result;
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "server_connect",
+      description:
+        "Open (or reuse) the pooled SSH connection for a server. Use this when the server requires two-factor authentication: ask the user for the current 6-digit verification code in the conversation, then call server_connect(server, otp). Once connected, every other tool reuses this connection without asking again. Returns connection details.",
+      parameters: {
+        server: { type: "string", required: true, description: "Server id from server_list." },
+        otp: { type: "string", description: "Current 6-digit one-time code for 2FA servers." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const server = findServer(getConfig(), args.server);
+        const started = Date.now();
+        const state = await pool.ensure(ctx, server, { ...(args.otp ? { verificationCode: args.otp } : {}) });
+        return {
+          server: server.id,
+          connected: state.alive,
+          latencyMs: Date.now() - started,
+          hostKeyFingerprint: state.fingerprint,
+          connectedAt: new Date(state.connectedAt).toISOString(),
+        };
       },
     }),
   );

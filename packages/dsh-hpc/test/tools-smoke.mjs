@@ -74,8 +74,8 @@ const treeRemote = `${remoteRoot}/tree`;
 const localDirDown = join(work, "tree-down");
 
 try {
-  check("16 tools registered", registered.size === 16, `count=${registered.size}`);
-  check("job tools are present", ["job_submit", "job_status", "job_logs", "job_cancel", "job_wait", "transfer_queue"].every((n) => registered.has(n)));
+  check("17 tools registered", registered.size === 17, `count=${registered.size}`);
+  check("job tools are present", ["job_submit", "job_status", "job_logs", "job_cancel", "job_wait", "transfer_queue", "server_connect"].every((n) => registered.has(n)));
   check("merged tools are gone", ["server_status", "session_list", "shell_open", "server_probe", "server_connect"].every((n) => !registered.has(n)));
   check("command wrappers are gone", ["run", "ls", "stat", "mkdir", "rm"].every((n) => !registered.has(n)));
 

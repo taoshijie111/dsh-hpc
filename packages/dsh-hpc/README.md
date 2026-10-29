@@ -100,14 +100,31 @@ the DSH credential store — never into plugin configuration:
 }
 ```
 
+### Two-factor authentication (6-digit codes)
+
+When a server asks for a one-time verification code (keyboard-interactive), the agent asks the
+user for the current code in the conversation and then calls:
+
+```text
+server_connect(server: "mfa-login", otp: "123456")
+```
+
+The code establishes the pooled SSH connection once; every later tool call reuses it without
+asking again. A new code is needed only after the connection is lost (idle timeout,
+`server_disconnect`, network failure or host reboot). Password-looking prompts are answered
+from the credential store; verification-code prompts receive `otp`.
+
+The settings page cannot prompt for a code, so for 2FA servers connect once from the chat
+(`server_connect`) before using "检测类型"/"资源占用" — sampling then reuses the pooled connection.
+
 `server_test(profile: true)` reports reachability, the host-key fingerprint and the detected
 scheduler; approve the fingerprint in the settings page (the agent never pins it silently).
 
-## Tools (16)
+## Tools (17)
 
 | Group | Tools |
 | --- | --- |
-| Servers | `server_list`, `server_add`, `server_remove`, `server_test`, `server_disconnect` |
+| Servers | `server_list`, `server_add`, `server_remove`, `server_test`, `server_connect`, `server_disconnect` |
 | Shell | `shell_run`, `shell_close` |
 | Jobs | `job_submit`, `job_status`, `job_logs`, `job_wait`, `job_cancel` |
 | Transfer | `upload`, `download`, `transfer_queue` |

@@ -41,7 +41,11 @@ export class ConnectionPool {
 
   constructor(private readonly options: PoolOptions) {}
 
-  async ensure(ctx: Context, server: ServerSpec): Promise<ConnectionState> {
+  async ensure(
+    ctx: Context,
+    server: ServerSpec,
+    options: { verificationCode?: string } = {},
+  ): Promise<ConnectionState> {
     if (this.closed) throw new Error("Connection pool is closed");
     const existing = this.entries.get(server.id);
     if (existing && existing.alive) {
@@ -54,6 +58,7 @@ export class ConnectionPool {
       connectTimeoutMs: this.options.connectTimeoutMs(),
       keepaliveIntervalMs: this.options.keepaliveIntervalMs(),
       expectedFingerprint: server.hostKey ?? null,
+      ...(options.verificationCode ? { verificationCode: options.verificationCode } : {}),
     });
     const state: ConnectionState = {
       serverId: server.id,
