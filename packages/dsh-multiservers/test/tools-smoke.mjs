@@ -19,6 +19,7 @@ const check = (name, ok, detail) => {
 };
 
 const registered = new Map();
+const commands = new Map();
 const effects = [];
 const ctx = {
   tools: { register: (d) => (registered.set(d.name, d), () => registered.delete(d.name)) },
@@ -29,6 +30,7 @@ const ctx = {
     unset: async () => undefined,
   },
   get: () => undefined,
+  commands: { register: (d) => (commands.set(d.name, d), () => commands.delete(d.name)) },
   effect(fn) {
     const dispose = fn();
     if (typeof dispose === "function") effects.push(dispose);
@@ -105,6 +107,13 @@ try {
 
   const down = await call("download", { server: "hpc1", remotePath: remoteFile, localPath: localDown });
   check("single download verifies", down.verified === true && readFileSync(localDown, "utf8") === payload);
+
+  const slashList = await commands.get("servers").handler({ rawInput: "" });
+  check("slash /servers reports the server list", slashList.kind === "success" && slashList.text.includes("hpc1") && slashList.text.includes("已连接"));
+  const slashUsage = await commands.get("server").handler({ rawInput: "hpc1" });
+  check("slash /server samples resources", slashUsage.kind === "success" && slashUsage.text.includes("GPU") && slashUsage.text.includes("内存"));
+  const slashUnknown = await commands.get("server").handler({ rawInput: "nope" });
+  check("slash /server rejects unknown ids", slashUnknown.kind === "error");
 
   const forward = await call("forward", { server: "hpc1", remoteHost: "127.0.0.1", remotePort: 22, localPort: 0 });
   const banner = await new Promise((resolve) => {

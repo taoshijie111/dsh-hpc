@@ -23,6 +23,19 @@ Authentication: password or key, plus an optional key passphrase credential; key
 (multi-factor) prompts are answered with the same stored secret. Connections are pooled; sessions
 and connections are reaped on idle (configurable in DSH Settings → 服务器).
 
+## Slash commands
+
+Human-facing commands (they never become model messages; the Web UI renders the result):
+
+| Command | Shows |
+| --- | --- |
+| `/servers` | Every configured server with connection state, idle time, sessions and forwarded ports |
+| `/server <id>` | Live sample of load, memory, CPU, GPU (`nvidia-smi`/`rocm-smi`), disks and the user's scheduler jobs |
+
+The commands share the plugin's pooled connection, so `/server` on an already connected server returns
+quickly. Richer presentation (sparklines, per-partition GPU detail, a server picker) can build on the
+same command names later.
+
 ## Install
 
 ```bash
