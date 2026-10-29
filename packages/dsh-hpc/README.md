@@ -56,6 +56,22 @@ dsh plugin --profile web add "$PWD/packages/dsh-hpc"   # or the built .tgz
 
 Restart DSH, then open **Settings → 服务器**.
 
+### Troubleshooting the install
+
+`ssh2` carries an optional native extra (`cpu-features`), whose build script pnpm blocks by
+default. On the first install pnpm may print `Run "pnpm approve-builds"` and the plugin
+command can exit non-zero even though the layer was written. Either:
+
+- run the same `dsh plugin add ...` command again — the second run is a no-op and exits 0; or
+- approve the dependency once: `cd ~/.dsh/profiles/<profile> && pnpm approve-builds`; or
+- install without dependency build scripts: `dsh plugin --profile web add --ignore-scripts dsh-hpc`.
+
+Verify the profile picked the plugin up:
+
+```bash
+dsh --profile web --dump-config | grep -A2 '# == dsh-hpc'
+```
+
 ## Configure servers
 
 Add a server in the settings page (or with the `server_add` tool). Passwords are written to
