@@ -8,6 +8,7 @@ import type { SessionRegistry } from "./core/session.js";
 import { execRemote, passwordRefFor } from "./core/ssh.js";
 import { cancelJob, loadJob, queryJobs, readJobLogs, saveJob, submitJob } from "./core/jobs.js";
 import { startJobWatcher } from "./core/watch.js";
+import { startTransferJob } from "./core/transfer-job.js";
 import { MultiserversError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
 
 const text = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }];
@@ -329,16 +330,27 @@ export function registerTools(
         localPath: { type: "string", required: true, description: "Absolute local file or directory path." },
         remotePath: { type: "string", required: true, description: "Absolute remote destination path." },
         overwrite: { type: "boolean", description: "Replace existing files with different content." },
+        background: { type: "boolean", description: "Run in the background; read progress with job_output and cancel with job_kill." },
+        chunkSize: { type: "number", description: "Transfer chunk size in bytes; defaults adapt to file size." },
       },
       output: objectOutput,
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
-        const result = await uploadWithResume(state.client, args.localPath, args.remotePath, {
+        const options = {
           overwrite: Boolean(args.overwrite),
           signal: exec.signal,
-        });
-        return { server: server.id, ...result };
+          ...(args.chunkSize ? { chunkSize: args.chunkSize } : {}),
+        };
+        if (args.background) {
+          const started = startTransferJob(ctx, exec.agent, state.client, "upload", { localPath: args.localPath, remotePath: args.remotePath }, options);
+          if (!started.jobId) throw new MultiserversError(`background upload unavailable: ${started.error ?? "unknown error"}`);
+          return jsonSafe({ server: server.id, background: true, jobId: started.jobId, localPath: args.localPath, remotePath: args.remotePath });
+        }
+        const startedAt = Date.now();
+        const result = await uploadWithResume(state.client, args.localPath, args.remotePath, options);
+        const durationMs = Date.now() - startedAt;
+        return jsonSafe({ server: server.id, ...result, durationMs, throughputMBps: result.bytes > 0 ? Math.round((result.bytes / (1024 * 1024) / (durationMs / 1000)) * 10) / 10 : 0 });
       },
     }),
   );
@@ -353,16 +365,27 @@ export function registerTools(
         remotePath: { type: "string", required: true, description: "Absolute remote file or directory path." },
         localPath: { type: "string", required: true, description: "Absolute local destination path." },
         overwrite: { type: "boolean", description: "Replace existing local files with different content." },
+        background: { type: "boolean", description: "Run in the background; read progress with job_output and cancel with job_kill." },
+        chunkSize: { type: "number", description: "Transfer chunk size in bytes; defaults adapt to file size." },
       },
       output: objectOutput,
       async execute(args, exec) {
         const server = findServer(getConfig(), args.server);
         const state = await pool.ensure(ctx, server);
-        const result = await downloadWithResume(state.client, args.remotePath, args.localPath, {
+        const options = {
           overwrite: Boolean(args.overwrite),
           signal: exec.signal,
-        });
-        return { server: server.id, ...result };
+          ...(args.chunkSize ? { chunkSize: args.chunkSize } : {}),
+        };
+        if (args.background) {
+          const started = startTransferJob(ctx, exec.agent, state.client, "download", { localPath: args.localPath, remotePath: args.remotePath }, options);
+          if (!started.jobId) throw new MultiserversError(`background download unavailable: ${started.error ?? "unknown error"}`);
+          return jsonSafe({ server: server.id, background: true, jobId: started.jobId, remotePath: args.remotePath, localPath: args.localPath });
+        }
+        const started = Date.now();
+        const result = await downloadWithResume(state.client, args.remotePath, args.localPath, options);
+        const durationMs = Date.now() - started;
+        return jsonSafe({ server: server.id, ...result, durationMs, throughputMBps: result.bytes > 0 ? Math.round((result.bytes / (1024 * 1024) / (durationMs / 1000)) * 10) / 10 : 0 });
       },
     }),
   );

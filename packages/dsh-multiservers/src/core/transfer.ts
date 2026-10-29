@@ -27,6 +27,10 @@ export type TransferResult = {
 export type TransferOptions = {
   overwrite: boolean;
   signal?: AbortSignal;
+  /** Read/write chunk size in bytes; defaults adapt to file size. */
+  chunkSize?: number;
+  /** Called after each chunk with (transferredBytes, totalBytes) for one file. */
+  onProgress?: (transferred: number, total: number) => void;
 };
 
 function digestFile(path: string): Promise<string> {
@@ -173,20 +177,41 @@ async function uploadFile(
   const partSize = await statSize(sftp, partPath);
   const offset = partSize !== null && partSize < localSize ? partSize : 0;
   if (partSize !== null && partSize >= localSize) await unlink(sftp, partPath);
+  shouldAbort(options.signal);
 
+  if (false && offset === 0) {
+    await new Promise<void>((resolve, reject) => {
+      sftp.fastPut(localPath, partPath, {
+        concurrency: 32,
+        chunkSize: 1024 * 1024,
+        step: (transferred: number, _chunk: unknown, total: number) => options.onProgress?.(transferred, total),
+      }, (error) => (error ? reject(error) : resolve()));
+    });
+    shouldAbort(options.signal);
+  } else {
   const handle = await openHandle(sftp, partPath, offset > 0 ? "r+" : "w");
   try {
-    const chunkSize = 256 * 1024;
+    const chunkSize = options.chunkSize ?? (localSize > 256 * 1024 * 1024 ? 8 * 1024 * 1024 : localSize > 32 * 1024 * 1024 ? 4 * 1024 * 1024 : 256 * 1024);
     let position = offset;
-    while (position < localSize) {
-      shouldAbort(options.signal);
-      const end = Math.min(position + chunkSize, localSize) - 1;
-      const chunk = await readChunk(localPath, position, end);
-      await writeAt(sftp, handle, chunk, position);
-      position += chunk.length;
+    try {
+      while (position < localSize) {
+        shouldAbort(options.signal);
+        const end = Math.min(position + chunkSize, localSize) - 1;
+        const chunk = await readChunk(localPath, position, end);
+        await writeAt(sftp, handle, chunk, position);
+        position += chunk.length;
+        options.onProgress?.(position, localSize);
+      }
+    } catch (error) {
+      await closeHandle(sftp, handle);
+      if (position === 0 && offset === 0) await unlink(sftp, partPath);
+      throw error;
+    } finally {
+      options.onProgress?.(position, localSize);
     }
   } finally {
     await closeHandle(sftp, handle);
+  }
   }
 
   const partSha = await remoteSha256(client, partPath);
@@ -308,12 +333,28 @@ async function downloadFile(
   const offset = partSize !== null && partSize < remoteSize ? partSize : 0;
   if (partSize !== null && partSize >= remoteSize) unlinkSync(partPath);
 
-  await new Promise<void>((resolve, reject) => {
-    const out = createWriteStream(partPath, offset > 0 ? { flags: "a" } : { flags: "w" });
-    const input = sftp.createReadStream(remotePath, { start: offset });
+  const chunkSize = options.chunkSize ?? (remoteSize > 256 * 1024 * 1024 ? 8 * 1024 * 1024 : remoteSize > 32 * 1024 * 1024 ? 4 * 1024 * 1024 : 256 * 1024);
+  let transferred = offset;
+  if (offset === 0) {
+    await new Promise<void>((resolve, reject) => {
+      sftp.fastGet(remotePath, partPath, {
+        concurrency: 32,
+        chunkSize: 1024 * 1024,
+        step: (amount: number, _chunk: unknown, total: number) => options.onProgress?.(amount, total),
+      }, (error) => (error ? reject(error) : resolve()));
+    });
+    shouldAbort(options.signal);
+    transferred = remoteSize;
+  } else await new Promise<void>((resolve, reject) => {
+    const out = createWriteStream(partPath, { flags: "a" });
+    const input = sftp.createReadStream(remotePath, { start: offset, highWaterMark: chunkSize });
     input.on("error", reject);
     out.on("error", reject);
     out.on("close", () => resolve());
+    input.on("data", (chunk: Buffer) => {
+      transferred += chunk.length;
+      options.onProgress?.(transferred, remoteSize);
+    });
     input.pipe(out);
     options.signal?.addEventListener("abort", () => {
       input.destroy();
