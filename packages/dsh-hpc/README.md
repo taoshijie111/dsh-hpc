@@ -1,92 +1,147 @@
 # dsh-hpc
 
-DeepSeek Harness plugin for HPC and remote servers: pooled SSH connections, sticky shell
-sessions, Slurm and bare-metal background jobs with completion notices, resumable
-single-file/directory/queue transfers, and a settings panel with live resource sampling.
+A DeepSeek Harness plugin for HPC and remote server work. It turns DSH into a practical
+remote-computing console: pooled SSH connections, sticky shell sessions, scheduler-aware
+background jobs, resumable transfers, and a settings page with live resource sampling.
 
-Exposes 12 tools to the model — server registry, connectivity/host-key checks, capability probing,
-command execution, SFTP file operations and transfers. No separate UI, no daemon: the plugin runs
-inside DSH and stores passwords in DSH's own credential store (the same place provider API keys live).
+> Status: v0.1.0 — first public release.
 
-## Tools (16)
+## Features
 
-| Group | Tool | Purpose |
-| --- | --- | --- |
-| Servers | `server_list` | Config + live state: connection, idle time, sessions, forwards |
-| | `server_add` / `server_remove` | Upsert / remove a server (no secrets in tool arguments) |
-| | `server_test` | Reachability, latency, host fingerprint; `profile=true` adds the capability profile |
-| | `server_disconnect` | Close sessions, forwards and the connection |
-| Shell | `shell_run` | Named sticky session (created on demand); capped output; timeout resets only that session |
-| | `shell_close` | Close one named session |
-| Transfer | `upload` / `download` / `transfer_queue` (explicit parent directory: `remoteDir` / `localDir`) | File or directory tree; `.part` staging + sha256, resume from partial size |
-| Network | `forward` | Local TCP forward through the pooled connection (Jupyter/TensorBoard) |
-| Jobs | `job_submit` / `job_status` / `job_logs` / `job_wait` / `job_cancel` | Long-running jobs: Slurm (`sbatch`, `squeue`/`sacct`, `scancel`) or bare metal (`setsid`+`nohup`, pid + exit-code file). Server `kind: auto` detects and caches the backend; `schedulerDefaults` supply partition/account/qos/time/cpus/mem/gpus; scripts and logs live under `jobRoot`. Transfers cover single files, directory trees, binary content, `.part` resume in both directions and an overwrite guard (`test:transfer`). Large transfers: chunk size adapts to file size (256 KB → 8 MB), results report `durationMs`/`throughputMBps`, `background: true` runs the transfer as a DSH background job (progress via `job_output`, cancel via `job_kill`), and downloads use pipelined `fastGet`. `test:transfer:big` benchmarks GB-scale files. `transfer_queue` runs a batch of file/directory items sequentially (background job by default, per-item progress, one failure does not stop the queue, single-file uploads auto-create parent directories); `test:transfer:queue` covers it. `job_submit` also starts a host-side watcher (a DSH background job owned by the session) that polls only job state with adaptive backoff — no remote sampler, no growing watch logs — and the session receives a completion notice when the job ends. |
+- **Pooled SSH connections** — one authenticated connection per server, shared by tools and
+  the settings page; keepalive plus idle reaping.
+- **Sticky shell sessions** — named login shells keep `cd`, exports and `module load`
+  across calls; commands in one session run serially; a timeout restarts only that session.
+- **Scheduler-aware jobs** — `kind: auto|bare|slurm|pbs|lsf`. Slurm is submitted with
+  `sbatch` and reconciled through `squeue`/`sacct`; bare metal runs as a detached
+  `setsid`/`nohup` process. A host-side watcher polls only job state (adaptive backoff, no
+  remote sampler logs) and settles a DSH background job, so the session receives a
+  completion notice instead of polling.
+- **Resumable transfers** — single file, directory tree, or queued batch; every file is
+  staged as `.part` and sha256-verified before an atomic rename, and resumes from the
+  existing partial size in both directions. `background: true` runs transfers as DSH
+  background jobs: progress via `job_output`, cancellation via `job_kill`.
+- **Settings panel** — manage servers from DSH Settings → 服务器, detect the scheduler type,
+  and sample CPU / memory / GPU / disk through a temporary connection that disconnects right
+  after sampling. Slurm servers show cluster capacity instead of the login node.
+- **Port forwarding** — local TCP tunnels through the pooled connection (Jupyter,
+  TensorBoard, database ports on compute nodes).
 
-Authentication: password or key, plus an optional key passphrase credential; keyboard-interactive
-(multi-factor) prompts are answered with the same stored secret. Connections are pooled; sessions
-and connections are reaped on idle (configurable in DSH Settings → 服务器).
+## Requirements
 
-## Settings status page
-
-DSH Settings → 服务器 shows live server state: online/offline, active sessions, forwarded ports.
-Each row has a **资源占用** action that samples the machine over the pooled SSH connection and renders
-load, memory, CPU, GPU (`nvidia-smi`/`rocm-smi`), disks and the user's scheduler jobs. A **刷新**
-button re-reads the connection state. The page calls two host endpoints
-(`/api/hpc/status`, `/api/hpc/usage`) that require the `x-hpc-request: 1`
-same-origin header.
+- DeepSeek Harness `>=0.2.1-rc.2 <0.3.0` (Web UI for the settings page).
+- Node.js 24.
+- SSH access to the target machines (password, key, optional key passphrase, or
+  keyboard-interactive/MFA).
 
 ## Install
 
+The plugin follows the standard DSH plugin contract (`dsh.bundle.patch` plus an optional
+client half), so it installs like any other DSH plugin.
+
+From npm:
+
 ```bash
+dsh plugin --profile web add dsh-hpc
+```
+
+From a local checkout or tarball:
+
+```bash
+git clone <repository> dsh-hpc && cd dsh-hpc
+npm install
 npm run build
-
-# fresh profile is recommended
-dsh --profile mss --from-default-profile web --dump-config
-dsh plugin --profile mss add <path-to-this-package>
-dsh --profile mss --port 4400
+dsh plugin --profile web add "$PWD/packages/dsh-hpc"   # or the built .tgz
 ```
 
-## Configuration
+Restart DSH, then open **Settings → 服务器**.
 
-```yaml
-- id: hpc
-  name: dsh-hpc
-  config:
-    servers:
-      - id: hpc1
-        label: HPC login node
-        host: hpc.example.invalid
-        port: 22
-        username: your-user
-        auth: key              # password | key
-        keyPath: C:/Users/you/.ssh/id_ed25519
-        hostKey: SHA256:...    # pin on first server_test if empty
-    connectTimeoutMs: 20000
-    commandTimeoutMs: 120000
+## Configure servers
+
+Add a server in the settings page (or with the `server_add` tool). Passwords are written to
+the DSH credential store — never into plugin configuration:
+
+```jsonc
+{
+  "servers": [
+    {
+      "id": "login01",
+      "host": "login01.example.org",
+      "username": "alice",
+      "auth": "password",          // or "key"
+      "passwordRef": "HPC_LOGIN01_PASSWORD",
+      "kind": "auto",              // auto detects slurm / pbs / lsf / bare metal
+      "schedulerDefaults": { "partition": "gpu", "account": "mylab", "time": "24:00:00" },
+      "jobRoot": "~/.dsh-hpc/jobs"
+    }
+  ]
+}
 ```
 
-Password authentication never puts the secret in this file: set the credential
-`MSS_<ID>_PASSWORD` in DSH's credential store (Settings → Models/credentials, or `server_add`).
+`server_test(profile: true)` reports reachability, the host-key fingerprint and the detected
+scheduler; approve the fingerprint in the settings page (the agent never pins it silently).
+
+## Tools (16)
+
+| Group | Tools |
+| --- | --- |
+| Servers | `server_list`, `server_add`, `server_remove`, `server_test`, `server_disconnect` |
+| Shell | `shell_run`, `shell_close` |
+| Jobs | `job_submit`, `job_status`, `job_logs`, `job_wait`, `job_cancel` |
+| Transfer | `upload`, `download`, `transfer_queue` |
+| Network | `forward` |
+
+Destinations use explicit parent directories: `upload(localPath, remoteDir)` writes
+`<remoteDir>/<basename(localPath)>`, `download(remotePath, localDir)` writes
+`<localDir>/<basename(remotePath)>`, and `transfer_queue` items are
+`{"source": "...", "targetDir": "..."}`.
+
+## Security
+
+- Credentials live in the DSH credential store; plugin configuration only stores references.
+- Host keys are verified against a pinned fingerprint; a mismatch refuses the connection.
+- Settings-page endpoints are same-origin and require the `x-hpc-request: 1` header.
+- Transfer scripts are staged with mode `0700`; no secrets are written to remote scripts.
 
 ## Development
 
 ```bash
-npm run build
+cd packages/dsh-hpc
+npm install
+npm run build        # tsc + client syntax gate
 npm run typecheck
-HPC_TEST_HOST=<host> HPC_TEST_USER=<user> HPC_TEST_KEY=<key> node test/tools-smoke.mjs
 ```
 
+Integration tests run against real SSH hosts and are skipped unless the environment is
+provided:
 
-## Settings page
+```bash
+export HPC_TEST_HOST_A=test-slurm-host HPC_TEST_USER=testuser HPC_TEST_PASSWORD_A=***
+export HPC_TEST_HOST_B=test-bare-host  HPC_TEST_PASSWORD_B=***
+npm run test:jobs        # scheduler + watcher end-to-end
+npm run test:transfer    # single file / directory / binary / resume / overwrite
+npm run test:transfer:queue
+npm run test:transfer:big   # GB-scale benchmark
+npm run test:parent-dir     # explicit parent-directory semantics
+npm run test:tools
+npm run test:session
+```
 
-The client half adds a **Servers** section to DSH Settings (registered into the
-`settings.section` slot). It lists configured servers, adds new ones (id, label, host, port,
-user, auth mode, key path or password, optional pinned fingerprint) and removes them.
+## Configuration reference
 
-- Non-secret fields are written through the client `configForms` service.
-- Passwords are written through `remote.credentials` into DSH's credential store as
-  `MSS_<ID>_PASSWORD`; they never enter the profile configuration.
-- The page only appears while the Host serves the `hpc` settings namespace
-  (`configForms.whileServed`).
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `connectTimeoutMs` | 15000 | SSH connect timeout |
+| `commandTimeoutMs` | 120000 | Default shell command timeout |
+| `keepaliveIntervalMs` | 30000 | TCP keepalive probe interval |
+| `idleTimeoutMs` | 600000 | Close idle connections (0 = never) |
+| `maxSessionsPerServer` | 4 | Named shell sessions per server |
+| `sessionIdleTimeoutMs` | 1800000 | Reap idle shell sessions (0 = never) |
 
-Editing an existing server and a "test connection" action are the next increments.
+Per-server fields: `id`, `host`, `port`, `username`, `label`, `auth`, `passwordRef`,
+`keyPath`, `keyPassphraseRef`, `hostKey`, `kind`, `resolvedKind`, `schedulerDefaults`,
+`jobRoot`.
+
+## License
+
+MIT — see [LICENSE](../../LICENSE).

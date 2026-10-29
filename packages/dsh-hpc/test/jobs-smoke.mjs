@@ -3,7 +3,7 @@
  * Job subsystem integration test: bare metal (setsid/nohup) + Slurm (sbatch).
  * Credentials are read at runtime from the DSH credential store; values are never printed.
  *
- * Env overrides: MSS_JZ_ID, MSS_BARE_ID, MSS_JZ_USER, MSS_BARE_USER.
+ * Env overrides: HPC_TEST_SLURM_ID, HPC_TEST_BARE_ID, HPC_TEST_USER, HPC_TEST_USER.
  */
 import { readFileSync, unlinkSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -16,8 +16,8 @@ if (__need.some((key) => !process.env[key])) {
 }
 
 
-const jzId = process.env.MSS_JZ_ID ?? "jz";
-const bareId = process.env.MSS_BARE_ID ?? "wxj-94";
+const Slurm 测试机Id = process.env.HPC_TEST_SLURM_ID ?? "slurm-test";
+const bareId = process.env.HPC_TEST_BARE_ID ?? "bare-test";
 const user = process.env.MSS_USER ?? (process.env.HPC_TEST_USER ?? "");
 
 function credentialStore() {
@@ -86,7 +86,7 @@ const ctx = {
 
 const config = {
   servers: [
-    { id: jzId, host: (process.env.HPC_TEST_HOST_A ?? ""), port: 22, username: user, auth: "password", passwordRef: "HPC_TEST_PASSWORD_A", kind: "slurm" },
+    { id: Slurm 测试机Id, host: (process.env.HPC_TEST_HOST_A ?? ""), port: 22, username: user, auth: "password", passwordRef: "HPC_TEST_PASSWORD_A", kind: "slurm" },
     { id: bareId, host: (process.env.HPC_TEST_HOST_B ?? ""), port: 22, username: user, auth: "password", passwordRef: "HPC_TEST_PASSWORD_B", kind: "bare" },
   ],
   connectTimeoutMs: 20000,
@@ -110,9 +110,9 @@ try {
 
   const bareHomeRaw = await call("shell_run", { server: bareId, command: 'printf %s "$HOME"' });
   const bareHome = bareHomeRaw.stdout.trim();
-  const jzHomeRaw = await call("shell_run", { server: jzId, command: 'printf %s "$HOME"' });
-  const jzHome = jzHomeRaw.stdout.trim();
-  check("target hosts reachable", bareHome.startsWith("/") && jzHome.startsWith("/"), `${bareId}:${bareHome} | ${jzId}:${jzHome}`);
+  const Slurm 测试机HomeRaw = await call("shell_run", { server: Slurm 测试机Id, command: 'printf %s "$HOME"' });
+  const Slurm 测试机Home = Slurm 测试机HomeRaw.stdout.trim();
+  check("target hosts reachable", bareHome.startsWith("/") && Slurm 测试机Home.startsWith("/"), `${bareId}:${bareHome} | ${Slurm 测试机Id}:${Slurm 测试机Home}`);
 
   // ---- bare metal ----
   const bare = await call("job_submit", {
@@ -148,13 +148,13 @@ try {
   check("bare cancelled job has no exit 0", gone.jobs[0]?.state === "cancelled");
 
   // ---- slurm ----
-  const partitionRaw = await call("shell_run", { server: jzId, command: "sinfo -h -o '%P' 2>/dev/null | head -1" });
+  const partitionRaw = await call("shell_run", { server: Slurm 测试机Id, command: "sinfo -h -o '%P' 2>/dev/null | head -1" });
   const partition = partitionRaw.stdout.trim().replace(/\*$/, "");
   check("slurm partition discovered", partition.length > 0, partition);
   const slurm = await call("job_submit", {
-    server: jzId,
+    server: Slurm 测试机Id,
     command: "echo hello-slurm; sleep 20",
-    workdir: jzHome,
+    workdir: Slurm 测试机Home,
     partition,
   });
   cleanup.push(slurm.jobId);

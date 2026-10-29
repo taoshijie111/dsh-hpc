@@ -62,7 +62,7 @@ try {
   check("sticky shell keeps cwd", pwd.stdout.trim() === "/tmp", JSON.stringify(pwd.stdout.trim()));
 
   const build = await run("pwd", { session: "build" });
-  check("second session starts with its own cwd", build.stdout.trim() === `/public/home/${user}`, JSON.stringify(build.stdout.trim()));
+  check("second session starts with its own cwd", build.stdout.trim() === `(process.env.HPC_TEST_HOME ?? "")`, JSON.stringify(build.stdout.trim()));
 
   await run("export MSS_FLAG=42");
   const flagA = await run("echo flag=$MSS_FLAG");

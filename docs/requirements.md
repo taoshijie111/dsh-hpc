@@ -193,7 +193,7 @@
 | Slurm 后端 | 生成 `#SBATCH` 脚本 + `sbatch --parsable`；`squeue` 查运行态、`sacct` 查终态，记账延迟返回 `unknown`；`scancel` 取消 |
 | 工具 | `job_submit`（立即返回 jobId）、`job_status`、`job_logs`（offset/截断）、`job_cancel`；工具总数 14 |
 | 稳定性修复 | `execRemote` 超时只销毁通道不关连接池；后台启动以 pid 文件返回，不等待通道关闭 |
-| 测试 | jobs-smoke **14/14**（裸金属 `wxj-94` + Slurm `jz`）；tools-smoke **20/20** |
+| 测试 | jobs-smoke **14/14**（裸金属 `bare-test` + Slurm `Slurm 测试机`）；tools-smoke **20/20** |
 
 
 ### 9.5 v1.8 作业完成通知（本地 watcher）
@@ -218,12 +218,12 @@
 | 布局修复 | 输入框 `box-sizing` + `min-width:0`，网格改为 `auto-fit minmax`；长字段（地址/密码/私钥/指纹）整行显示，消除可填框重叠；连接设置按「空闲与回收 / 超时与保活」分组 |
 | 服务器类型 | 状态行显示 Slurm / 裸金属 / 自动检测徽标 |
 | 类型检测 | `kind: auto` 首次采样或点「检测类型」时探测 `scontrol/sbatch`→Slurm、`qsub/qstat`→PBS、`bsub/bjobs`→LSF，否则裸金属；结果写回 `resolvedKind` 并显示在服务器卡片；新建/编辑时可手动指定（自动/裸金属/Slurm/PBS/LSF） |
-| Slurm 集群视图 | jz 显示计算节点而非登录节点：71 节点（空闲/混合/分配/异常）、CPU 分配率 90.7%（12366/13632 核）、各节点可用内存合计（约 29.5 TB）、分区明细（cpu192 / cpu192-mem-64G）、运行/排队作业；登录节点仅作参考行 |
-| 实测 | wxj-94（512 核、A800、内存 52%）与 jz（Slurm 集群）均返回正确结构化数据；采样后 `connected:false` 证明已自动断开 |
+| Slurm 集群视图 | Slurm 测试机显示计算节点而非登录节点：约 70 个节点（空闲/混合/分配/异常）、CPU 分配率约 90%、各节点可用内存合计、分区明细、运行/排队作业；登录节点仅作参考行 |
+| 实测 | bare-test（多核 CPU + GPU、内存约 50%）与 Slurm 测试机（Slurm 集群）均返回正确结构化数据；采样后 `connected:false` 证明已自动断开 |
 
 ### 9.7 传输回归（v1.9.1）
 
-| 场景 | 结果（wxj-94 / jz 各 19 项） |
+| 场景 | 结果（bare-test / Slurm 测试机 各 19 项） |
 | --- | --- |
 | 单文件上传/下载（文本） | sha256 校验通过、内容一致 |
 | 二进制文件（4 KB 随机） | 双向往返字节一致 |
@@ -247,7 +247,7 @@
 | 下载加速 | 非续传路径改用 ssh2 `fastGet`（concurrency 32、1 MB 分块）管线化拉取；续传仍用带 offset 的流式读取 |
 | 结果指标 | 每次传输返回 `durationMs` / `throughputMBps` |
 
-**1 GB 实测（wxj-94，2026-10-29）**
+**1 GB 实测（bare-test，2026-10-29）**
 
 | 指标 | 数值 |
 | --- | --- |

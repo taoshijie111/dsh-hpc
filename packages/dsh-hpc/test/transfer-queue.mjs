@@ -14,7 +14,7 @@ if (__need.some((key) => !process.env[key])) {
 }
 
 
-const serverId = process.env.HPC_TEST_SERVER ?? "wxj-94";
+const serverId = process.env.HPC_TEST_SERVER ?? "bare-test";
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");
@@ -55,11 +55,11 @@ plugin.apply(ctx, {
   servers: [
     {
       id: serverId,
-      host: serverId === "jz" ? (process.env.HPC_TEST_HOST_A ?? "") : (process.env.HPC_TEST_HOST_B ?? ""),
+      host: serverId === "slurm-test" ? (process.env.HPC_TEST_HOST_A ?? "") : (process.env.HPC_TEST_HOST_B ?? ""),
       port: 22,
       username: (process.env.HPC_TEST_USER ?? ""),
       auth: "password",
-      passwordRef: serverId === "jz" ? "HPC_TEST_PASSWORD_A" : "HPC_TEST_PASSWORD_B",
+      passwordRef: serverId === "slurm-test" ? "HPC_TEST_PASSWORD_A" : "HPC_TEST_PASSWORD_B",
       kind: "bare",
     },
   ],

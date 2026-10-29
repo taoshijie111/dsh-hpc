@@ -14,7 +14,7 @@ if (__need.some((key) => !process.env[key])) {
 
 const host = process.env.HPC_TEST_HOST ?? (process.env.HPC_TEST_HOST_A ?? "");
 const user = process.env.HPC_TEST_USER ?? (process.env.HPC_TEST_USER ?? "");
-const home = `/public/home/${user}`;
+const home = `(process.env.HPC_TEST_HOME ?? "")`;
 const keyPath = process.env.HPC_TEST_KEY ?? join(homedir(), ".ssh", "id_ed25519");
 const hostKey = process.env.HPC_TEST_HOSTKEY ?? "SHA256:RdHHL8XKm28DrTNlHdu9NhY+o5qzf8Dr5V/9AbardOI";
 

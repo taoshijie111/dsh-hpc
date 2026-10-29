@@ -16,7 +16,7 @@ if (__need.some((key) => !process.env[key])) {
 }
 
 
-const serversToTest = (process.env.HPC_TEST_SERVERS ?? "wxj-94,jz").split(",").map((value) => value.trim()).filter(Boolean);
+const serversToTest = (process.env.HPC_TEST_SERVERS ?? "bare-test,Slurm 测试机").split(",").map((value) => value.trim()).filter(Boolean);
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");
@@ -56,12 +56,12 @@ const ctx = {
 plugin.apply(ctx, {
   servers: serversToTest.map((id) => ({
     id,
-    host: id === "jz" ? (process.env.HPC_TEST_HOST_A ?? "") : (process.env.HPC_TEST_HOST_B ?? ""),
+    host: id === "slurm-test" ? (process.env.HPC_TEST_HOST_A ?? "") : (process.env.HPC_TEST_HOST_B ?? ""),
     port: 22,
     username: (process.env.HPC_TEST_USER ?? ""),
     auth: "password",
-    passwordRef: id === "jz" ? "HPC_TEST_PASSWORD_A" : "HPC_TEST_PASSWORD_B",
-    kind: id === "jz" ? "slurm" : "bare",
+    passwordRef: id === "slurm-test" ? "HPC_TEST_PASSWORD_A" : "HPC_TEST_PASSWORD_B",
+    kind: id === "slurm-test" ? "slurm" : "bare",
   })),
   connectTimeoutMs: 20000,
   commandTimeoutMs: 120000,

@@ -11,7 +11,7 @@ if (__need.some((key) => !process.env[key])) {
 }
 
 
-const serverId = process.env.HPC_TEST_SERVER ?? "wxj-94";
+const serverId = process.env.HPC_TEST_SERVER ?? "bare-test";
 
 function credentialStore() {
   const file = join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml");

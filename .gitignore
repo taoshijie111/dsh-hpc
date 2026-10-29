@@ -24,3 +24,6 @@ probe-out/
 
 # build output of the plugin package
 lib/
+
+# npm pack artifacts
+*.tgz
