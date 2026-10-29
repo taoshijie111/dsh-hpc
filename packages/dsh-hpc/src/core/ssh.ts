@@ -52,31 +52,18 @@ export function isVerificationPrompt(prompt: string): boolean {
 }
 
 export async function connect(ctx: Context, server: ServerSpec, options: ConnectOptions): Promise<Connection> {
-  const client = new Client();
-  let observed = "";
-  const connectConfig: ConnectConfig = {
-    host: server.host,
-    port: server.port ?? 22,
-    username: server.username,
-    readyTimeout: options.connectTimeoutMs,
-    keepaliveInterval: options.keepaliveIntervalMs ?? 30_000,
-    hostVerifier: (rawKey: Buffer) => {
-      observed = fingerprintOf(rawKey);
-      const expected = options.expectedFingerprint;
-      // Unknown host: accept and report (the caller decides whether to pin).
-      // Changed host: refuse. This mirrors TOFU and never silently accepts drift.
-      return !expected || expected === observed;
-    },
-  };
-
+  // Resolve auth material once; each attempt reuses it.
+  let password: string | undefined;
+  let privateKey: Buffer | undefined;
+  let passphrase: string | undefined;
   let interactiveSecret: string | undefined;
   if (server.auth === "password") {
-    connectConfig.password = await resolvePassword(ctx, server);
-    interactiveSecret = connectConfig.password;
+    password = await resolvePassword(ctx, server);
+    interactiveSecret = password;
   } else {
     if (!server.keyPath) throw new HpcError(`Server "${server.id}" uses key auth but has no keyPath`);
     try {
-      connectConfig.privateKey = await readFile(server.keyPath);
+      privateKey = await readFile(server.keyPath);
     } catch (error) {
       throw new HpcError(
         `Cannot read private key for "${server.id}" at ${server.keyPath}: ${(error as Error).message}`,
@@ -85,50 +72,93 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
     if (server.keyPassphraseRef) {
       const hit = await ctx.credentials.resolve(credentialRef(server.keyPassphraseRef));
       if (hit?.value) {
-        connectConfig.passphrase = hit.value;
+        passphrase = hit.value;
         interactiveSecret = hit.value;
       }
     }
   }
-  // Keyboard-interactive servers: answer password/passphrase prompts with the
-  // stored secret and verification-code prompts with the caller-supplied code.
-  connectConfig.tryKeyboard = true;
-  let sawVerificationPrompt = false;
-  client.on("keyboard-interactive", (_name, _instructions, _lang, prompts, finish) => {
-    const answers = prompts.map((rawPrompt: unknown) => {
-      const prompt = typeof rawPrompt === "string" ? rawPrompt : String((rawPrompt as { prompt?: string })?.prompt ?? "");
-      if (isVerificationPrompt(prompt)) {
-        sawVerificationPrompt = true;
-        return options.verificationCode ?? interactiveSecret ?? "";
-      }
-      return interactiveSecret ?? "";
+  const code = options.verificationCode?.trim();
+  // Prompt texts observed across attempts, used for actionable auth diagnostics.
+  const promptsSeen: string[] = [];
+
+  const attempt = (passwordOverride?: string): Promise<Connection> =>
+    new Promise<Connection>((resolve, reject) => {
+      const client = new Client();
+      let observed = "";
+      let sawVerificationPrompt = false;
+      const connectConfig: ConnectConfig = {
+        host: server.host,
+        port: server.port ?? 22,
+        username: server.username,
+        readyTimeout: options.connectTimeoutMs,
+        keepaliveInterval: options.keepaliveIntervalMs ?? 30_000,
+        hostVerifier: (rawKey: Buffer) => {
+          observed = fingerprintOf(rawKey);
+          const expected = options.expectedFingerprint;
+          // Unknown host: accept and report (the caller decides whether to pin).
+          // Changed host: refuse. This mirrors TOFU and never silently accepts drift.
+          return !expected || expected === observed;
+        },
+        tryKeyboard: true,
+      };
+      if (privateKey) connectConfig.privateKey = privateKey;
+      if (passphrase) connectConfig.passphrase = passphrase;
+      const effectivePassword = passwordOverride ?? password;
+      if (effectivePassword !== undefined) connectConfig.password = effectivePassword;
+
+      client.on("keyboard-interactive", (_name, _instructions, _lang, prompts, finish) => {
+        const answers = prompts.map((rawPrompt: unknown) => {
+          const prompt =
+            typeof rawPrompt === "string" ? rawPrompt : String((rawPrompt as { prompt?: string })?.prompt ?? "");
+          if (prompt && promptsSeen.length < 8 && !promptsSeen.includes(prompt)) promptsSeen.push(prompt);
+          if (isVerificationPrompt(prompt)) {
+            sawVerificationPrompt = true;
+            return code ?? interactiveSecret ?? "";
+          }
+          return interactiveSecret ?? "";
+        });
+        finish(answers);
+      });
+
+      const diagnostics = () => {
+        const prompts = promptsSeen.length > 0 ? ` Keyboard-interactive prompts seen: ${JSON.stringify(promptsSeen)}.` : " No keyboard-interactive prompt was offered by the server.";
+        const hint = code
+          ? sawVerificationPrompt
+            ? " The code was supplied but the server still rejected authentication (code may have expired or the password is wrong)."
+            : " The code was supplied but no verification-code prompt appeared; the server may expect the code appended to the password."
+          : ` If this server requires a one-time code, ask the user for the current 6-digit code, then call server_connect(server: "${server.id}", otp: "<code>").`;
+        return prompts + hint;
+      };
+
+      client.once("error", (error: Error) => {
+        reject(
+          new HpcError(
+            `Connection to "${server.id}" (${server.host}:${server.port ?? 22}) failed: ${error.message}.${diagnostics()}`,
+          ),
+        );
+      });
+      client.once("ready", () => {
+        resolve({ client, fingerprint: observed, close: () => client.end() });
+      });
+      client.connect(connectConfig);
     });
-    finish(answers);
-  });
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => {
-      client.removeListener("ready", onReady);
-      const twoFactorHint =
-        sawVerificationPrompt && !options.verificationCode
-          ? ` Server "${server.id}" asks for one-time verification code (2FA): ask the user for the current 6-digit code, then retry with server_connect(server: "${server.id}", otp: "<code>").`
-          : "";
-      reject(
-        new HpcError(
-          `Connection to "${server.id}" (${server.host}:${server.port ?? 22}) failed: ${error.message}.${twoFactorHint}`,
-        ),
+  try {
+    return await attempt();
+  } catch (firstError) {
+    // Some gateways expect the one-time code appended to the password and never
+    // send a keyboard-interactive prompt. Try that only when the caller provided
+    // a code and the first attempt saw no prompt (never more than two attempts,
+    // to avoid locking the account).
+    if (!code || promptsSeen.length > 0) throw firstError;
+    try {
+      return await attempt(password ? `${password}${code}` : code);
+    } catch (secondError) {
+      throw new HpcError(
+        `${(firstError as Error).message} Retried with password+code: ${(secondError as Error).message}`,
       );
-    };
-    const onReady = () => {
-      client.removeListener("error", onError);
-      resolve();
-    };
-    client.once("error", onError);
-    client.once("ready", onReady);
-    client.connect(connectConfig);
-  });
-
-  return { client, fingerprint: observed, close: () => client.end() };
+    }
+  }
 }
 
 /** Run a one-off command through the remote login shell with a hard timeout. */
