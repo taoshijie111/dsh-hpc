@@ -21,3 +21,6 @@ probe-out/
 
 # scratch space for smoke tests
 .tmp/
+
+# build output of the plugin package
+lib/
