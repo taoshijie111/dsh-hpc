@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# local runtime data (never commit credentials, caches or project state)
+.multiservers/
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# third-party reference material (analysis inputs, not part of the product)
+references/
+
+# local probe output that may embed host details
+probe-out/

@@ -1,0 +1,16 @@
+{
+  "name": "multiservers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first project kernel; HPC servers as compute and storage resources.",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "probe:ssh": "node scripts/dev/ssh-probe.mjs"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  }
+}
