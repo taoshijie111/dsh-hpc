@@ -5,6 +5,7 @@ import type { ConnectionPool } from "./pool.js";
 import { findServer, MultiserversError, type Config, type ServerSpec } from "./types.js";
 
 const MARKER = "\x1eMSS";
+const MAX_BUFFER = 1024 * 1024;
 const DEFAULT_SESSION = "main";
 
 export type RunResult = {
@@ -16,6 +17,8 @@ export type RunResult = {
   stateReset: boolean;
   durationMs: number;
   cwd: string | null;
+  truncated: boolean;
+  totalBytes: number;
 };
 
 export type SessionInfo = {
@@ -36,6 +39,8 @@ type Pending = {
   timer: NodeJS.Timeout | null;
   signal?: AbortSignal;
   onAbort?: () => void;
+  truncated: boolean;
+  totalBytes: number;
 };
 
 /**
@@ -62,6 +67,11 @@ export class ShellSession {
 
   get alive(): boolean {
     return !this.closed && !this.dead && this.stream !== null;
+  }
+
+  /** True while a command runs or is queued; idle reaping skips busy sessions. */
+  get busy(): boolean {
+    return this.pending !== null || this.queue.length > 0;
   }
 
   start(): Promise<void> {
@@ -109,7 +119,17 @@ export class ShellSession {
   }
 
   private onData(chunk: Buffer): void {
-    this.buffer += chunk.toString("utf8");
+    const text = chunk.toString("utf8");
+    if (!this.pending) {
+      this.buffer += text;
+      return;
+    }
+    this.pending.totalBytes += Buffer.byteLength(text);
+    this.buffer += text;
+    if (this.buffer.length > MAX_BUFFER) {
+      this.buffer = this.buffer.slice(this.buffer.length - MAX_BUFFER);
+      this.pending.truncated = true;
+    }
     this.drain();
   }
 
@@ -140,6 +160,8 @@ export class ShellSession {
       stateReset: false,
       durationMs: Date.now() - pending.startedAt,
       cwd,
+      truncated: pending.truncated,
+      totalBytes: pending.totalBytes,
     });
     this.lastUsed = Date.now();
     void this.pump();
@@ -161,6 +183,8 @@ export class ShellSession {
         stateReset: true,
         durationMs: Date.now() - pending.startedAt,
         cwd: null,
+        truncated: pending.truncated,
+        totalBytes: pending.totalBytes,
       });
     }
     const queued = this.queue;
@@ -174,6 +198,8 @@ export class ShellSession {
         stateReset: true,
         durationMs: 0,
         cwd: null,
+        truncated: false,
+        totalBytes: 0,
       });
     }
   }
@@ -205,6 +231,8 @@ export class ShellSession {
       timeoutMs: next.timeoutMs,
       timer: null,
       ...(next.signal ? { signal: next.signal } : {}),
+      truncated: false,
+      totalBytes: 0,
     };
     this.pending = pending;
     const stream = this.stream!;
@@ -242,6 +270,8 @@ export class ShellSession {
       stateReset: true,
       durationMs: Date.now() - pending.startedAt,
       cwd: null,
+      truncated: pending.truncated,
+      totalBytes: pending.totalBytes,
     });
     if (!this.closed) await this.restart();
     if (!this.pending) void this.pump();
@@ -295,8 +325,31 @@ export class SessionRegistry {
 
   constructor(
     private readonly pool: ConnectionPool,
-    private readonly maxPerServer: () => number,
+    private readonly options: { maxPerServer: () => number; idleTimeoutMs: () => number },
   ) {}
+
+  private sweepTimer: NodeJS.Timeout | null = null;
+
+  private armSweep(): void {
+    if (this.sweepTimer || this.sessions.size === 0) return;
+    this.sweepTimer = setInterval(() => this.sweepIdle(), 60_000);
+    this.sweepTimer.unref?.();
+  }
+
+  private sweepIdle(): void {
+    const timeout = this.options.idleTimeoutMs();
+    if (timeout > 0) {
+      const now = Date.now();
+      for (const session of [...this.sessions.values()]) {
+        if (!session.alive || session.busy) continue;
+        if (now - Date.parse(session.describe().lastUsedAt) > timeout) void this.close(session.serverId, session.name);
+      }
+    }
+    if (this.sessions.size === 0 && this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
+  }
 
   private key(serverId: string, name: string): string {
     return `${serverId}::${name}`;
@@ -313,9 +366,10 @@ export class SessionRegistry {
       this.pool.detachSession(serverId, name);
     }
     const inUse = [...this.sessions.values()].filter((session) => session.serverId === serverId && session.alive).length;
-    if (inUse >= this.maxPerServer()) {
+    const limit = this.options.maxPerServer();
+    if (inUse >= limit) {
       throw new MultiserversError(
-        `Server "${serverId}" already has ${inUse} sessions (limit ${this.maxPerServer()}); close an idle session first.`,
+        `Server "${serverId}" already has ${inUse} sessions (limit ${limit}); close an idle session first.`,
       );
     }
     const connection = await this.pool.ensure(ctx, server);
@@ -323,6 +377,7 @@ export class SessionRegistry {
     await session.start();
     this.sessions.set(key, session);
     this.pool.attachSession(serverId, name);
+    this.armSweep();
     return session;
   }
 
@@ -370,5 +425,9 @@ export class SessionRegistry {
       }
     }
     this.sessions.clear();
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
   }
 }

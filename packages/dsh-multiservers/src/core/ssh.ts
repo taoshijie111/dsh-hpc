@@ -58,8 +58,10 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
     },
   };
 
+  let interactiveSecret: string | undefined;
   if (server.auth === "password") {
     connectConfig.password = await resolvePassword(ctx, server);
+    interactiveSecret = connectConfig.password;
   } else {
     if (!server.keyPath) throw new MultiserversError(`Server "${server.id}" uses key auth but has no keyPath`);
     try {
@@ -69,7 +71,19 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
         `Cannot read private key for "${server.id}" at ${server.keyPath}: ${(error as Error).message}`,
       );
     }
+    if (server.keyPassphraseRef) {
+      const hit = await ctx.credentials.resolve(credentialRef(server.keyPassphraseRef));
+      if (hit?.value) {
+        connectConfig.passphrase = hit.value;
+        interactiveSecret = hit.value;
+      }
+    }
   }
+  // Keyboard-interactive servers (MFA) receive the same secret for every prompt.
+  connectConfig.tryKeyboard = true;
+  client.on("keyboard-interactive", (_name, _instructions, _lang, prompts, finish) => {
+    finish(interactiveSecret ? prompts.map(() => interactiveSecret) : []);
+  });
 
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {

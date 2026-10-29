@@ -3,12 +3,18 @@ import type { Client } from "ssh2";
 import { connect } from "./ssh.js";
 import type { ServerSpec } from "./types.js";
 
+export type ForwardInfo = {
+  localPort: number;
+  remoteHost: string;
+  remotePort: number;
+};
+
+type Forward = ForwardInfo & { server: import("node:net").Server };
+
 /**
  * One authenticated SSH connection per server, kept alive across tool calls.
- *
- * A connection is the transport; it can carry several shell sessions and SFTP
- * channels at once. Idle connections are closed after `idleTimeoutMs`, but a
- * connection with live sessions is never reaped by the idle timer.
+ * A connection carries multiple shell sessions, SFTP channels and forwarded
+ * ports; idle reaping never closes a connection that still has live sessions.
  */
 export type ConnectionState = {
   serverId: string;
@@ -18,8 +24,8 @@ export type ConnectionState = {
   lastUsedAt: number;
   alive: boolean;
   idleTimer: NodeJS.Timeout | null;
-  /** Session names currently attached to this connection. */
   sessions: Set<string>;
+  forwards: Map<number, Forward>;
 };
 
 export type PoolOptions = {
@@ -58,10 +64,12 @@ export class ConnectionPool {
       alive: true,
       idleTimer: null,
       sessions: new Set(),
+      forwards: new Map(),
     };
     connection.client.once("close", () => {
       state.alive = false;
       state.sessions.clear();
+      this.closeForwards(state);
       if (this.entries.get(server.id) === state) this.entries.delete(server.id);
     });
     connection.client.on("error", () => {
@@ -83,6 +91,7 @@ export class ConnectionPool {
     connectedAt: string;
     idleSinceMs: number;
     sessions: string[];
+    forwards: ForwardInfo[];
   }> {
     return [...this.entries.values()]
       .filter((state) => state.alive)
@@ -92,10 +101,32 @@ export class ConnectionPool {
         connectedAt: new Date(state.connectedAt).toISOString(),
         idleSinceMs: Math.max(0, Date.now() - state.lastUsedAt),
         sessions: [...state.sessions],
+        forwards: [...state.forwards.values()].map(({ localPort, remoteHost, remotePort }) => ({
+          localPort,
+          remoteHost,
+          remotePort,
+        })),
       }));
   }
 
-  /** Mark a connection unusable; the next operation reconnects. */
+  /** Register a listening local forward that uses this connection's channel. */
+  addForward(state: ConnectionState, forward: Forward): void {
+    state.forwards.set(forward.localPort, forward);
+    this.touch(state);
+  }
+
+  closeForward(state: ConnectionState, localPort: number): boolean {
+    const forward = state.forwards.get(localPort);
+    if (!forward) return false;
+    state.forwards.delete(localPort);
+    try {
+      forward.server.close();
+    } catch {
+      /* already closed */
+    }
+    return true;
+  }
+
   drop(serverId: string): void {
     this.forget(serverId);
   }
@@ -117,8 +148,6 @@ export class ConnectionPool {
   }
 
   async close(serverId: string): Promise<void> {
-    const state = this.entries.get(serverId);
-    if (!state) return;
     this.forget(serverId);
   }
 
@@ -152,11 +181,23 @@ export class ConnectionPool {
     state.idleTimer.unref?.();
   }
 
+  private closeForwards(state: ConnectionState): void {
+    for (const forward of state.forwards.values()) {
+      try {
+        forward.server.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    state.forwards.clear();
+  }
+
   private forget(serverId: string): void {
     const state = this.entries.get(serverId);
     if (!state) return;
     this.entries.delete(serverId);
     this.clearIdle(state);
+    this.closeForwards(state);
     state.alive = false;
     try {
       state.client.end();

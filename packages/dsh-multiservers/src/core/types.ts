@@ -15,6 +15,8 @@ export interface ServerSpec {
   passwordRef?: string;
   /** Local private key path, for `auth: "key"`. */
   keyPath?: string;
+  /** Credential reference holding the private key passphrase. */
+  keyPassphraseRef?: string;
   /** Pinned host key fingerprint, e.g. `SHA256:...`. Empty means first use pins it. */
   hostKey?: string;
 }
@@ -29,6 +31,8 @@ export interface Config {
   idleTimeoutMs?: number;
   /** Named sessions allowed per server. */
   maxSessionsPerServer?: number;
+  /** Close a shell session after this many idle milliseconds; 0 disables. */
+  sessionIdleTimeoutMs?: number;
 }
 
 export interface ExecResult {

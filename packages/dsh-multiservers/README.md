@@ -6,22 +6,22 @@ Exposes 12 tools to the model — server registry, connectivity/host-key checks,
 command execution, SFTP file operations and transfers. No separate UI, no daemon: the plugin runs
 inside DSH and stores passwords in DSH's own credential store (the same place provider API keys live).
 
-## Tools (14)
+## Tools (10)
 
 | Group | Tool | Purpose |
 | --- | --- | --- |
-| Servers | `server_list` | List configured servers, auth mode and pin state |
-| | `server_add` / `server_remove` | Register / remove a server; passwords live in the credential store |
-| | `server_test` | Reachability, latency, host fingerprint, optional pin |
-| | `server_probe` | Read-only capability profile (OS, schedulers, rsync, tmux, storage) |
-| Connection | `server_connect` / `server_disconnect` | Explicit login / logout; connections are pooled and reused |
-| | `server_status` | Live connections, idle time, sessions |
-| Session | `shell_open` / `shell_run` / `shell_close` | Named sticky shells: `cd`, exports and module loads persist; commands run serially |
-| | `session_list` | All sessions across servers |
-| Transfer | `upload` / `download` | SFTP single file, resume from the existing partial size, sha256 verification |
+| Servers | `server_list` | Config + live state: connection, idle time, sessions, forwards |
+| | `server_add` / `server_remove` | Upsert / remove a server (no secrets in tool arguments) |
+| | `server_test` | Reachability, latency, host fingerprint; `profile=true` adds the capability profile |
+| | `server_disconnect` | Close sessions, forwards and the connection |
+| Shell | `shell_run` | Named sticky session (created on demand); capped output; timeout resets only that session |
+| | `shell_close` | Close one named session |
+| Transfer | `upload` / `download` | File or directory tree; `.part` staging + sha256, resume from partial size |
+| Network | `forward` | Local TCP forward through the pooled connection (Jupyter/TensorBoard) |
 
-Linux commands are not wrapped: after `shell_open`, the agent runs `ls`, `mkdir`, `rm`, `grep`, `sbatch`
-and anything else directly in the session.
+Authentication: password or key, plus an optional key passphrase credential; keyboard-interactive
+(multi-factor) prompts are answered with the same stored secret. Connections are pooled; sessions
+and connections are reaped on idle (configurable in DSH Settings → 服务器).
 
 ## Install
 

@@ -120,6 +120,7 @@ window.__ModuleLoader__.load({
           keepaliveSeconds: Math.round((value.keepaliveIntervalMs ?? 30000) / 1000),
           commandSeconds: Math.round((value.commandTimeoutMs ?? 120000) / 1000),
           connectSeconds: Math.round((value.connectTimeoutMs ?? 15000) / 1000),
+          sessionIdleMinutes: Math.round((value.sessionIdleTimeoutMs ?? 1800000) / 60000),
         });
       }, [snapshot.revision, snapshot.status]);
       if (!draft) return null;
@@ -135,6 +136,7 @@ window.__ModuleLoader__.load({
             ["keepaliveIntervalMs", Math.max(0, Math.round(Number(draft.keepaliveSeconds) * 1000))],
             ["commandTimeoutMs", Math.max(1000, Math.round(Number(draft.commandSeconds) * 1000))],
             ["connectTimeoutMs", Math.max(1000, Math.round(Number(draft.connectSeconds) * 1000))],
+            ["sessionIdleTimeoutMs", Math.max(0, Math.round(Number(draft.sessionIdleMinutes) * 60000))],
           ];
           let ok = true;
           for (const [field, amount] of ops) ok = (await form.set(field, amount)) && ok;
@@ -166,6 +168,8 @@ window.__ModuleLoader__.load({
             h("input", { style: css.input, inputMode: "numeric", value: draft.commandSeconds, onChange: (e) => update({ commandSeconds: e.target.value }) })),
           h(Field, { label: "连接超时（秒）" },
             h("input", { style: css.input, inputMode: "numeric", value: draft.connectSeconds, onChange: (e) => update({ connectSeconds: e.target.value }) })),
+          h(Field, { label: "会话空闲断开（分钟，0 = 不断开）" },
+            h("input", { style: css.input, inputMode: "numeric", value: draft.sessionIdleMinutes, onChange: (e) => update({ sessionIdleMinutes: e.target.value }) })),
         ),
         h(
           "div",

@@ -54,6 +54,10 @@ export const Config = Schema.object({
     .description("Close idle connections after this many milliseconds; 0 disables.")
     .volatile(),
   maxSessionsPerServer: Schema.number().default(4).description("Named shell sessions allowed per server.").volatile(),
+  sessionIdleTimeoutMs: Schema.number()
+    .default(1800000)
+    .description("Close idle shell sessions after this many milliseconds; 0 disables.")
+    .volatile(),
 });
 
 /** Live section while the settings service is mounted; apply-time config otherwise. */
@@ -79,7 +83,10 @@ export function apply(ctx: Context, config: ConfigShape): void {
     keepaliveIntervalMs: () => live().keepaliveIntervalMs ?? 30000,
     idleTimeoutMs: () => live().idleTimeoutMs ?? 600000,
   });
-  const sessions = new SessionRegistry(pool, () => live().maxSessionsPerServer ?? 4);
+  const sessions = new SessionRegistry(pool, {
+    maxPerServer: () => live().maxSessionsPerServer ?? 4,
+    idleTimeoutMs: () => live().sessionIdleTimeoutMs ?? 1_800_000,
+  });
   registerTools(ctx, live, pool, sessions);
   ctx.effect(
     () => () => {

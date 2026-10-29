@@ -1,4 +1,4 @@
-# 产品需求 v1.3 — DSH 服务器管理插件（`dsh-multiservers`）
+# 产品需求 v1.4 — DSH 服务器管理插件（`dsh-multiservers`）
 
 | 项 | 内容 |
 | --- | --- |
@@ -155,6 +155,22 @@
 | 集成测试 | `test/tools-smoke.mjs` **19/19**；`test/session-smoke.mjs` **13/13** |
 | 网页端 | 新工具面与「连接设置」已下发，插件加载无报错 |
 
+
+### 9.2 v1.4 实施记录（工具面收敛 + P0 + 指定 P2）
+
+| 项 | 结果 |
+| --- | --- |
+| 工具面 14 → 10 | `server_list` 合并运行时状态；`server_test` 合并探测与建连（`profile` 开关）；`shell_run` 自动建会话；删除 `server_status/session_list/shell_open/server_probe/server_connect` |
+| P0-1 输出上限 | `shell_run` 捕获上限 1 MiB，`maxBytes` 可调，返回 `truncated/totalBytes` |
+| P0-2 原子传输 | 上传/下载均写 `.part`，校验后 rename；中断可续传 |
+| P0-3 密码移出工具 | `server_add` 不再接受 password；密码只在设置页写入凭据库 |
+| P0-4 指纹不由 agent pin | `server_test` 仅报告指纹；信任由设置页人工确认 |
+| P2-9 目录传输 | `upload`/`download` 支持目录递归，逐文件原子传输 |
+| P2-10 会话空闲回收 | `sessionIdleTimeoutMs`（默认 30 分钟，0=关闭），设置页可改 |
+| P2-12 密钥口令 / MFA | 私钥 passphrase 走 `keyPassphraseRef` 凭据；keyboard-interactive 用同一凭据应答 |
+| P2-13 端口转发 | `forward` 工具经连接池转发本地 TCP 端口；断开/卸载时自动关闭 |
+| 测试 | tools-smoke **19/19**；session-smoke **13/13** |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。
@@ -169,3 +185,4 @@
 - v1.2 连接复用 + 粘性 shell；移除基础文件工具；空闲时间可配置
 - v1.3 多会话（命名、上限、独立状态、session_list）；传输策略分层（SFTP 续传为基线，rsync 可选）
 - v1.3 已实施：连接池 + 多会话 + 新工具面 + SFTP 续传/校验；集成测试 19/19 与 13/13
+- v1.4 已实施：工具面收敛为 10 个；P0 四项；目录传输、会话空闲回收、密钥口令/MFA、端口转发

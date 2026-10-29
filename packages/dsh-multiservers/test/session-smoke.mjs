@@ -44,7 +44,7 @@ const pool = new ConnectionPool({
   keepaliveIntervalMs: () => 30000,
   idleTimeoutMs: () => 0,
 });
-const sessions = new SessionRegistry(pool, () => 4);
+const sessions = new SessionRegistry(pool, { maxPerServer: () => 4, idleTimeoutMs: () => 0 });
 
 const run = (command, opts = {}) =>
   sessions.run(ctx, config, "hpc1", command, { timeoutMs: 30000, ...opts });
