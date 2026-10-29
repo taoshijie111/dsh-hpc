@@ -169,7 +169,100 @@ window.__ModuleLoader__.load({
       );
     }
 
+
+    function ClusterUsage(props) {
+      const sample = props.sample;
+      const cluster = sample.cluster || {};
+      const nodes = cluster.nodes || {};
+      const cpus = cluster.cpus || {};
+      const memory = cluster.memoryMb || null;
+      const gpus = cluster.gpus || {};
+      const jobs = cluster.jobs || {};
+      const partitions = Array.isArray(cluster.partitions) ? cluster.partitions : [];
+      const login = sample.login || {};
+      const partitionTotal = (entry) => entry.idle + entry.mixed + entry.allocated + entry.down + entry.other;
+      return h(
+        "div",
+        null,
+        h(
+          "div",
+          { style: { ...css.serverHead, marginBottom: 8 } },
+          h("span", { style: css.cardTitle }, "计算节点"),
+          h("span", { style: css.chip }, `共 ${nodes.total || 0} 台`),
+          h("span", { style: css.chip }, `空闲 ${nodes.idle || 0}`),
+          h("span", { style: css.chip }, `混合 ${nodes.mixed || 0}`),
+          h("span", { style: css.chip }, `分配 ${nodes.allocated || 0}`),
+          nodes.down ? h("span", { style: { ...css.chip, color: "#dc2626" } }, `异常 ${nodes.down}`) : null,
+          h("span", { style: css.spacer }),
+          h("span", { style: css.chip }, `运行作业 ${jobs.running || 0} · 排队 ${jobs.pending || 0}`),
+        ),
+        h(
+          "div",
+          { style: css.statsGrid },
+          h(Stat, {
+            label: "CPU 分配率",
+            value: `${cpus.percent || 0}% · ${cpus.allocated || 0} / ${cpus.total || 0} 核`,
+            percent: cpus.percent,
+          }),
+          memory && memory.total > 0 && memory.allocated > 0
+            ? h(Stat, {
+                label: "内存分配率",
+                value: `${memory.percent || 0}% · ${gb(memory.allocated)} / ${gb(memory.total)}`,
+                percent: memory.percent,
+              })
+            : memory && memory.freeMb > 0
+              ? h(Stat, { label: "可用内存（各节点合计）", value: gb(memory.freeMb), percent: null })
+              : memory && memory.total > 0
+                ? h(Stat, { label: "内存总量", value: `${gb(memory.total)}（分配数据不可用）`, percent: null })
+                : null,
+          gpus.total > 0
+            ? h(Stat, {
+                label: "GPU 占用",
+                value: `${gpus.percent || 0}% · ${gpus.used || 0} / ${gpus.total || 0} 卡`,
+                percent: gpus.percent,
+              })
+            : h("div", { style: css.note }, "该集群无 GPU 节点"),
+        ),
+        partitions.length
+          ? h(
+              "div",
+              { style: { ...css.statsGrid, marginTop: 10, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" } },
+              partitions.slice(0, 6).map((partition) =>
+                h(
+                  "div",
+                  { key: partition.name, style: css.gpuCard },
+                  h(
+                    "div",
+                    { style: { ...css.serverHead, marginBottom: 6 } },
+                    h("span", { style: css.gpuName }, partition.name),
+                    h("span", { style: css.spacer }),
+                    h("span", { style: css.chip }, `${partitionTotal(partition)} 节点`),
+                  ),
+                  h(
+                    "div",
+                    { style: { ...css.note, marginBottom: 5 } },
+                    `空闲 ${partition.idle} · 混合 ${partition.mixed} · 分配 ${partition.allocated}${partition.down ? ` · 异常 ${partition.down}` : ""}`,
+                  ),
+                  h(Bar, { percent: partitionTotal(partition) > 0 ? (partition.allocated / partitionTotal(partition)) * 100 : 0 }),
+                ),
+              ),
+            )
+          : null,
+        h(
+          "div",
+          { style: css.footer },
+          h("span", null, "登录节点"),
+          h("span", null, `CPU ${login.cpu && login.cpu.usagePercent != null ? login.cpu.usagePercent : "—"}%`),
+          h("span", null, `内存 ${login.memory ? login.memory.percent : "—"}%`),
+          h("span", null, `${login.cpu && login.cpu.cores ? login.cpu.cores : "?"} 核`),
+          h("span", { style: css.spacer }),
+          h("span", null, `采样 ${new Date(sample.sampledAt).toLocaleTimeString()} · ${sample.elapsedMs} ms · 已自动断开`),
+        ),
+      );
+    }
+
     function UsageGauges(props) {
+      if (props.sample.kind === "slurm") return h(ClusterUsage, { sample: props.sample });
       const sample = props.sample;
       const cpu = sample.cpu || {};
       const memory = sample.memory || null;
