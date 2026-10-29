@@ -40,6 +40,21 @@ const check = (name, ok, detail) => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const store = credentialStore();
+const watched = [];
+const killedWatches = [];
+const fakeJobs = {
+  start(spec) {
+    watched.push(spec);
+    const job = { id: `mss-job-${watched.length}`, append() {}, updateProgress() {} };
+    const hooks = spec.run(job);
+    hooks.done.catch(() => undefined);
+    return job.id;
+  },
+  kill(id) {
+    killedWatches.push(id);
+    return "requested";
+  },
+};
 const registered = new Map();
 const effects = [];
 const ctx = {
@@ -54,7 +69,7 @@ const ctx = {
     set: async () => undefined,
     unset: async () => undefined,
   },
-  get: () => undefined,
+  get: (name) => (name === "jobs" ? fakeJobs : undefined),
   inject: (_names, callback) => callback({}),
   effect(fn) {
     const dispose = fn();
@@ -113,10 +128,16 @@ try {
   const full = await call("job_logs", { jobId: bare.jobId });
   check("bare log has the tail", full.text.includes("bye-bare"));
 
+  check("job_submit registers a local watcher", bare.watching === true && watched.length >= 1 && String(bare.watchJobId).startsWith("mss-job-"), `watch=${bare.watchJobId}`);
+
+  const waited = await call("job_wait", { jobId: bare.jobId, timeoutMs: 15000 });
+  check("job_wait returns the terminal state", waited.state === "completed" && waited.exitCode === 0 && waited.timedOut === false);
+
   const bareLong = await call("job_submit", { server: bareId, command: "sleep 60", workdir: bareHome, name: "cancelme" });
   cleanup.push(bareLong.jobId);
   const cancelled = await call("job_cancel", { jobId: bareLong.jobId });
   check("bare cancel marks cancelled", cancelled.state === "cancelled");
+  check("job_cancel stops the watcher", killedWatches.length >= 1);
   const gone = await call("job_status", { jobId: bareLong.jobId });
   check("bare cancelled job has no exit 0", gone.jobs[0]?.state === "cancelled");
 

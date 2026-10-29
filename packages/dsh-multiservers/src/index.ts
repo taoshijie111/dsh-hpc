@@ -4,6 +4,7 @@ import { ConnectionPool } from "./core/pool.js";
 import { SessionRegistry } from "./core/session.js";
 import { registerApi, setApiContext } from "./api.js";
 import { registerTools } from "./tools.js";
+import { resumeWatchers } from "./core/watch.js";
 import type { Config as ConfigShape } from "./core/types.js";
 
 /**
@@ -103,6 +104,7 @@ export function apply(ctx: Context, config: ConfigShape): void {
     idleTimeoutMs: () => live().sessionIdleTimeoutMs ?? 1_800_000,
   });
   registerTools(ctx, live, pool, sessions);
+  resumeWatchers(ctx, pool, () => live().servers);
   setApiContext(ctx);
   ctx.inject(["webServer"], (injected) => {
     const webServer = (injected as unknown as { webServer?: { register(route: never): () => void } }).webServer;

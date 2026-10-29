@@ -46,6 +46,8 @@ export type JobRecord = {
   pidStart?: string;
   state: JobState;
   exitCode?: number | null;
+  /** DSH background job id watching this remote job, when registered. */
+  watchJobId?: string;
   createdAt: string;
   lastCheckedAt: string;
 };
@@ -56,7 +58,7 @@ function ledgerPath(id: string): string {
   return join(ledgerDir(), `${id}.json`);
 }
 
-function save(record: JobRecord): void {
+export function saveJob(record: JobRecord): void {
   mkdirSync(ledgerDir(), { recursive: true });
   writeFileSync(ledgerPath(record.id), JSON.stringify(record, null, 2), "utf8");
 }
@@ -250,7 +252,7 @@ export async function submitJob(
     record.state = "queued";
   }
 
-  save(record);
+  saveJob(record);
   return record;
 }
 
@@ -281,7 +283,7 @@ async function refreshBare(ctx: Context, pool: ConnectionPool, server: ServerSpe
   } else {
     record.state = record.state === "cancelled" ? "cancelled" : "lost";
   }
-  save(record);
+  saveJob(record);
   return record;
 }
 
@@ -293,7 +295,7 @@ async function refreshSlurm(ctx: Context, pool: ConnectionPool, server: ServerSp
   const running = queue.stdout.trim().toUpperCase();
   if (running) {
     record.state = running.startsWith("PENDING") ? "queued" : "running";
-    save(record);
+    saveJob(record);
     return record;
   }
   const accounting = await execRemote(
@@ -316,8 +318,20 @@ async function refreshSlurm(ctx: Context, pool: ConnectionPool, server: ServerSp
   } else {
     record.state = "unknown";
   }
-  save(record);
+  saveJob(record);
   return record;
+}
+
+/** Reconcile one ledger record with the scheduler or process. */
+export async function refreshJob(
+  ctx: Context,
+  pool: ConnectionPool,
+  server: ServerSpec,
+  record: JobRecord,
+): Promise<JobRecord> {
+  return record.backend === "slurm"
+    ? refreshSlurm(ctx, pool, server, record)
+    : refreshBare(ctx, pool, server, record);
 }
 
 export async function queryJobs(
@@ -394,7 +408,7 @@ export async function cancelJob(
   }
   record.state = "cancelled";
   record.lastCheckedAt = new Date().toISOString();
-  save(record);
+  saveJob(record);
   return record;
 }
 

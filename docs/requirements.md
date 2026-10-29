@@ -1,4 +1,4 @@
-# 产品需求 v1.7 — DSH 服务器管理插件（`dsh-multiservers`）
+# 产品需求 v1.8 — DSH 服务器管理插件（`dsh-multiservers`）
 
 | 项 | 内容 |
 | --- | --- |
@@ -195,6 +195,18 @@
 | 稳定性修复 | `execRemote` 超时只销毁通道不关连接池；后台启动以 pid 文件返回，不等待通道关闭 |
 | 测试 | jobs-smoke **14/14**（裸金属 `wxj-94` + Slurm `jz`）；tools-smoke **20/20** |
 
+
+### 9.5 v1.8 作业完成通知（本地 watcher）
+
+| 项 | 实现 |
+| --- | --- |
+| 背景 | 旧用法靠 agent 在远端跑采样器写日志再读日志，长任务（DFT 数天）会产生无限日志且持续消耗上下文 |
+| 方案 | 提交后在本机注册 DSH 后台任务（`ctx.jobs.start`，owner=当前会话）：只轮询远端状态（`squeue`/`kill -0`），不写任何远端日志；作业终态时后台任务结束，`dsh-tool-jobs` 自动向该会话推送完成通知 |
+| 轮询 | 自适应退避：15s → 25s → … → 上限 15min；监控失败仅追加一条诊断，不中断 |
+| 工具 | `job_submit` 新增 `watch`（默认 true）；新增 `job_wait`（默认 5min 阻塞等待）；`job_status` 返回 `watching`；`job_cancel` 同时撤销 watcher |
+| 重载恢复 | 插件启动时按账本恢复未完成作业的 watcher（无 owner 时退化为静默监控） |
+| 测试 | jobs-smoke **17/17**（含 watcher 注册、job_wait、cancel 撤销）；tools-smoke **20/20**（15 工具） |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。
@@ -213,3 +225,4 @@
 - v1.5 斜杠命令实验（已移除：第三方 host 命令结果无渲染节点）
 - v1.6 设置页「状态」面板 + host 状态/采样 HTTP 接口；移除斜杠命令
 - v1.7 长任务子系统：服务器类型/默认资源、作业账本、裸金属与 Slurm 双后端、4 个 job 工具
+- v1.8 本地 watcher + DSH 后台任务完成通知；job_wait；取消联动撤销监控

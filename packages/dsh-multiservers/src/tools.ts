@@ -6,7 +6,8 @@ import type { ConnectionPool } from "./core/pool.js";
 import { downloadWithResume, uploadWithResume } from "./core/transfer.js";
 import type { SessionRegistry } from "./core/session.js";
 import { execRemote, passwordRefFor } from "./core/ssh.js";
-import { cancelJob, loadJob, queryJobs, readJobLogs, submitJob } from "./core/jobs.js";
+import { cancelJob, loadJob, queryJobs, readJobLogs, saveJob, submitJob } from "./core/jobs.js";
+import { startJobWatcher } from "./core/watch.js";
 import { MultiserversError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
 
 const text = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value, null, 2) }];
@@ -439,9 +440,10 @@ export function registerTools(
         cpusPerTask: { type: "number", description: "CPUs for the job." },
         memory: { type: "string", description: "Memory request, e.g. 32G." },
         gpus: { type: "number", description: "GPUs requested (Slurm --gres)." },
+        watch: { type: "boolean", description: "Watch the job locally and notify this session when it ends; defaults to true." },
       },
       output: objectOutput,
-      async execute(args) {
+      async execute(args, exec) {
         const config = getConfig();
         const server = findServer(config, args.server);
         const resources = {
@@ -466,7 +468,16 @@ export function registerTools(
             );
           },
         );
-        return { ...record, jobId: record.id };
+        let watchJobId: string | null = null;
+        if (args.watch !== false) {
+          const owner = (exec as unknown as { agent?: { sessionId?: string } }).agent?.sessionId;
+          watchJobId = startJobWatcher(ctx, pool, () => getConfig().servers, record.id, owner);
+          if (watchJobId) {
+            record.watchJobId = watchJobId;
+            saveJob(record);
+          }
+        }
+        return { ...record, jobId: record.id, watching: Boolean(watchJobId) };
       },
     }),
   );
@@ -498,6 +509,7 @@ export function registerTools(
             outPath: job.outPath,
             createdAt: job.createdAt,
             lastCheckedAt: job.lastCheckedAt,
+            watching: Boolean(job.watchJobId),
           })),
         };
       },
@@ -532,6 +544,39 @@ export function registerTools(
 
   register(
     defineTool({
+      name: "job_wait",
+      description:
+        "Block until a job reaches a terminal state or the timeout expires (default 5 minutes). Use it for short jobs instead of polling; long-running jobs are announced by their watcher.",
+      parameters: {
+        jobId: { type: "string", required: true, description: "Job id returned by job_submit." },
+        timeoutMs: { type: "number", description: "Maximum wait in milliseconds; defaults to 300000." },
+      },
+      output: objectOutput,
+      async execute(args) {
+        const timeoutMs = args.timeoutMs ?? 300_000;
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+          const jobs = await queryJobs(ctx, pool, getConfig().servers, { jobId: args.jobId });
+          const job = jobs[0];
+          if (!job) throw new MultiserversError(`Unknown job "${args.jobId}"`);
+          const terminal = ["completed", "failed", "cancelled", "lost"].includes(job.state);
+          if (terminal || Date.now() >= deadline) {
+            return {
+              jobId: job.id,
+              state: job.state,
+              exitCode: job.exitCode ?? null,
+              timedOut: !terminal,
+              waitedMs: timeoutMs - Math.max(0, deadline - Date.now()),
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, Math.min(5000, Math.max(250, deadline - Date.now()))));
+        }
+      },
+    }),
+  );
+
+  register(
+    defineTool({
       name: "job_cancel",
       description:
         "Cancel a running or queued job: scancel on Slurm, SIGTERM then SIGKILL on bare metal. The ledger records cancelled.",
@@ -542,6 +587,14 @@ export function registerTools(
       async execute(args) {
         const record = loadJob(args.jobId);
         if (!record) throw new MultiserversError(`Unknown job "${args.jobId}"`);
+        if (record.watchJobId) {
+          const jobs = ctx.get("jobs") as { kill?: (id: string, caller?: string, reason?: string) => string } | undefined;
+          try {
+            jobs?.kill?.(record.watchJobId, undefined, "作业已取消");
+          } catch {
+            /* watcher already gone */
+          }
+        }
         const server = findServer(getConfig(), record.server);
         const cancelled = await cancelJob(ctx, pool, server, record);
         return { jobId: cancelled.id, state: cancelled.state };
