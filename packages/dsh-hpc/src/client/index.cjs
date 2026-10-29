@@ -1,7 +1,7 @@
 /**
  * dsh-hpc — browser half.
  *
- * Adds a "服务器" section to DSH Settings. Copy is written for the person using
+ * Adds a "dsh-hpc" section to DSH Settings. Copy is written for the person using
  * it: no tool names, no storage or schema jargon. Non-secret fields go through
  * the settings form; passwords go to the DSH credential store.
  *
@@ -843,7 +843,7 @@ window.__ModuleLoader__.load({
         h(
           "div",
           { style: css.head },
-          h("h3", { style: css.title }, "服务器"),
+          h("h3", { style: css.title }, "dsh-hpc"),
           h("span", { style: css.grow }),
           h("button", { type: "button", style: css.button, disabled: !writable || formOpen, onClick: startAdd }, "添加"),
         ),
@@ -869,7 +869,7 @@ window.__ModuleLoader__.load({
                 name: "settings.section",
                 id: "hpc",
                 order: 40,
-                label: () => "服务器",
+                label: () => "dsh-hpc",
                 inject: () => page,
               },
               ServersSection,
