@@ -27,3 +27,6 @@ lib/
 
 # npm pack artifacts
 *.tgz
+
+# internal analysis reports (not part of the plugin)
+reports/

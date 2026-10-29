@@ -441,7 +441,7 @@ Citadel 的可复用经验：幂等回执 + `uncertain` 不重放、架构边界
 | 运行时 | python3（miniconda）、conda、docker；无 singularity/apptainer |
 | 模块系统 | `module` 命令可用 |
 | 存储 | `/public` 800 TB（Nexdata，38% 用量）；`/usr/local/globle/softs` 491 GB；`/` 141 GB |
-| HOME / SHELL | `/public/home/your-user` / `/bin/bash` |
+| HOME / SHELL | `/home/your-user` / `/bin/bash` |
 
 **探测发现的两个设计要点**：
 
