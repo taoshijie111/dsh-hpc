@@ -16,6 +16,7 @@ const objectOutput = {
   render: (_args: unknown, value: unknown) => text(value),
 };
 const DEFAULT_MAX_BYTES = 256 * 1024;
+const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 type SettingsLike = {
   describe(): Array<{ ns: string; revision: number; value?: unknown }>;
@@ -471,15 +472,20 @@ export function registerTools(
         let watchJobId: string | null = null;
         let watchError: string | undefined;
         if (args.watch !== false) {
-          const watch = startJobWatcher(ctx, pool, () => getConfig().servers, record.id, exec.agent);
-          if (watch.id) {
-            watchJobId = watch.id;
-            record.watchJobId = watch.id;
-            saveJob(record);
+          try {
+            const watch = startJobWatcher(ctx, pool, () => getConfig().servers, record.id, exec.agent);
+            if (watch.id) {
+              watchJobId = watch.id;
+              record.watchJobId = watch.id;
+              saveJob(record);
+            }
+            if (!watch.id || watch.ownerBound === false) watchError = watch.error ?? "watcher is not bound to this session; completion notices may not arrive";
+          } catch (watchFailure) {
+            watchError = `watcher registration threw: ${(watchFailure as Error).message}`;
+            console.error("[multiservers] watcher registration threw", watchFailure);
           }
-          if (!watch.id || watch.ownerBound === false) watchError = watch.error ?? "watcher is not bound to this session; completion notices may not arrive";
         }
-        return { ...record, jobId: record.id, watching: Boolean(watchJobId), ...(watchError ? { watchError } : {}) };
+        return jsonSafe({ ...record, jobId: record.id, watching: Boolean(watchJobId), ...(watchError ? { watchError } : {}) });
       },
     }),
   );
@@ -499,7 +505,7 @@ export function registerTools(
           ...(args.server ? { serverId: args.server } : {}),
           ...(args.jobId ? { jobId: args.jobId } : {}),
         });
-        return {
+        return jsonSafe({
           jobs: jobs.map((job) => ({
             jobId: job.id,
             server: job.server,
@@ -513,7 +519,7 @@ export function registerTools(
             lastCheckedAt: job.lastCheckedAt,
             watching: Boolean(job.watchJobId),
           })),
-        };
+        });
       },
     }),
   );
@@ -563,13 +569,13 @@ export function registerTools(
           if (!job) throw new MultiserversError(`Unknown job "${args.jobId}"`);
           const terminal = ["completed", "failed", "cancelled", "lost"].includes(job.state);
           if (terminal || Date.now() >= deadline) {
-            return {
+            return jsonSafe({
               jobId: job.id,
               state: job.state,
               exitCode: job.exitCode ?? null,
               timedOut: !terminal,
               waitedMs: timeoutMs - Math.max(0, deadline - Date.now()),
-            };
+            });
           }
           await new Promise((resolve) => setTimeout(resolve, Math.min(5000, Math.max(250, deadline - Date.now()))));
         }
@@ -599,7 +605,7 @@ export function registerTools(
         }
         const server = findServer(getConfig(), record.server);
         const cancelled = await cancelJob(ctx, pool, server, record);
-        return { jobId: cancelled.id, state: cancelled.state };
+        return jsonSafe({ jobId: cancelled.id, state: cancelled.state });
       },
     }),
   );

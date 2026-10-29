@@ -51,9 +51,18 @@ export function startJobWatcher(
   recordId: string,
   agent?: { sessionId?: string; ctx?: unknown },
 ): WatchOutcome {
-  const root = ctx.get("jobs") as JobsService | undefined;
-  const agentCtx = agent?.ctx as { jobs?: JobsService } | undefined;
-  const agentJobs = agentCtx?.jobs;
+  // Service access must not throw: property access on a non-injected service
+  // raises inside Cordis, which would abort job_submit after the job started.
+  const readJobs = (candidate: Context | undefined): JobsService | undefined => {
+    if (!candidate) return undefined;
+    try {
+      return candidate.get("jobs") as JobsService | undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const root = readJobs(ctx);
+  const agentJobs = readJobs((agent?.ctx as Context | undefined) ?? undefined);
   const candidates: Array<{ service: JobsService; scope: string }> = [];
   if (agentJobs?.start) candidates.push({ service: agentJobs, scope: "agent" });
   if (root?.start && root !== agentJobs) candidates.push({ service: root, scope: "host" });
@@ -62,6 +71,8 @@ export function startJobWatcher(
     console.error(`[multiservers] watcher unavailable: ${message}`);
     return { error: message };
   }
+  const agentLike = agent as { sessionId?: string; session?: { id?: string } } | undefined;
+  const ownerSessionId = agentLike?.sessionId ?? agentLike?.session?.id;
   const state = { cancelled: false };
   const errors: string[] = [];
   const start = (service: JobsService, ownerSessionId?: string): string => {
@@ -117,7 +128,7 @@ export function startJobWatcher(
   };
   for (const candidate of candidates) {
     try {
-      return { id: start(candidate.service, agent?.sessionId), ownerBound: Boolean(agent?.sessionId) };
+      return { id: start(candidate.service, ownerSessionId), ownerBound: Boolean(ownerSessionId) };
     } catch (error) {
       errors.push(`${candidate.scope}: ${(error as Error).message}`);
     }
