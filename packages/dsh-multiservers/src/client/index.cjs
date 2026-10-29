@@ -1,13 +1,11 @@
 /**
  * dsh-multiservers — browser half.
  *
- * Registers a "Servers" section on the DSH Settings page. Non-secret fields are
- * written to this plugin's config through the settings service; passwords go to
- * DSH's credential store through `remote.credentials`, never into the config.
+ * Adds a "服务器" section to DSH Settings. Copy is written for the person using
+ * it: no tool names, no storage or schema jargon. Non-secret fields go through
+ * the settings form; passwords go to the DSH credential store.
  *
- * The file is a lazy-CJS module factory expected by the DSH client module
- * loader (`window.__ModuleLoader__.load`). React is resolved through the
- * loader's `require`; no cross-plugin value imports are made.
+ * Delivered as a lazy-CJS module factory for the DSH client module loader.
  */
 window.__ModuleLoader__.load({
   id: "dsh-multiservers",
@@ -19,69 +17,92 @@ window.__ModuleLoader__.load({
     const React = require("react");
     const h = React.createElement;
 
-    /** Settings namespace === the Loader entry id used in cordis.patch.yml. */
     const NS = "multiservers";
-    const refFor = (id) =>
-      `MSS_${String(id).toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_PASSWORD`;
+    const refFor = (id) => `MSS_${String(id).toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_PASSWORD`;
 
-    const styles = {
-      root: { padding: "8px 4px 24px", maxWidth: 760, color: "inherit" },
-      title: { fontSize: 15, fontWeight: 600, margin: "0 0 4px" },
-      hint: { fontSize: 12, opacity: 0.7, margin: "0 0 16px", lineHeight: 1.6 },
-      card: {
-        border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
+    const css = {
+      root: { padding: "4px 2px 28px", maxWidth: 680 },
+      head: { display: "flex", alignItems: "baseline", gap: 12, marginBottom: 2 },
+      title: { fontSize: 15, fontWeight: 600, margin: 0 },
+      grow: { flex: 1 },
+      lead: { fontSize: 12.5, opacity: 0.65, margin: "0 0 18px" },
+      row: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "11px 12px",
         borderRadius: 8,
-        padding: "10px 12px",
+        border: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
         marginBottom: 8,
       },
-      row: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" },
-      name: { fontWeight: 600, fontSize: 13 },
-      meta: { fontSize: 12, opacity: 0.75 },
-      spacer: { flex: 1 },
-      grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 },
-      field: { display: "flex", flexDirection: "column", gap: 3, fontSize: 12 },
-      input: {
-        padding: "5px 7px",
-        borderRadius: 6,
-        border: "1px solid color-mix(in srgb, currentColor 25%, transparent)",
+      rowMain: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 },
+      name: { fontSize: 13, fontWeight: 600 },
+      sub: { fontSize: 12, opacity: 0.6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+      warn: { fontSize: 12, color: "#d97706" },
+      link: {
+        border: "none",
         background: "transparent",
         color: "inherit",
+        opacity: 0.65,
         font: "inherit",
+        fontSize: 12,
+        cursor: "pointer",
+        padding: "2px 4px",
       },
-      actions: { display: "flex", gap: 8, marginTop: 10, alignItems: "center" },
-      button: {
-        padding: "5px 12px",
+      linkDanger: { color: "#dc2626", opacity: 0.9 },
+      form: {
+        border: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
+        borderRadius: 8,
+        padding: "14px 14px 12px",
+        marginTop: 4,
+      },
+      grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+      field: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12 },
+      label: { opacity: 0.65 },
+      input: {
+        padding: "6px 8px",
         borderRadius: 6,
-        border: "1px solid color-mix(in srgb, currentColor 25%, transparent)",
+        border: "1px solid color-mix(in srgb, currentColor 22%, transparent)",
         background: "transparent",
         color: "inherit",
         font: "inherit",
+        width: "100%",
+      },
+      advanced: { marginTop: 10, fontSize: 12, opacity: 0.75 },
+      actions: { display: "flex", gap: 8, alignItems: "center", marginTop: 14 },
+      button: {
+        padding: "5px 14px",
+        borderRadius: 6,
+        border: "1px solid color-mix(in srgb, currentColor 22%, transparent)",
+        background: "transparent",
+        color: "inherit",
+        font: "inherit",
+        fontSize: 12.5,
         cursor: "pointer",
       },
       primary: { background: "#3b82f6", borderColor: "#3b82f6", color: "#fff" },
-      danger: { color: "#dc2626" },
-      status: { fontSize: 12, opacity: 0.8, marginTop: 8, minHeight: 16 },
-      empty: { fontSize: 12, opacity: 0.65, padding: "8px 0" },
+      status: { fontSize: 12, opacity: 0.75, marginTop: 10, minHeight: 16 },
+      empty: { fontSize: 12.5, opacity: 0.6, padding: "6px 2px 16px" },
     };
 
-    const blankDraft = () => ({
-      id: "",
-      label: "",
+    const emptyDraft = () => ({
+      name: "",
       host: "",
       port: "22",
       username: "",
       auth: "password",
-      keyPath: "",
       password: "",
+      keyPath: "",
       hostKey: "",
+      label: "",
     });
 
-    function labeled(label, input) {
+    function Field(props) {
       return h(
         "label",
-        { style: styles.field },
-        h("span", null, label),
-        input,
+        { style: css.field },
+        h("span", { style: css.label }, props.label),
+        props.children,
       );
     }
 
@@ -95,7 +116,9 @@ window.__ModuleLoader__.load({
       const value = snapshot.value ?? {};
       const servers = Array.isArray(value.servers) ? value.servers : [];
       const writable = snapshot.status === "ready" && snapshot.writable;
-      const [draft, setDraft] = React.useState(blankDraft);
+
+      const [editing, setEditing] = React.useState(null); // null | 'new' | server id
+      const [draft, setDraft] = React.useState(emptyDraft);
       const [status, setStatus] = React.useState("");
       const [busy, setBusy] = React.useState(false);
       const [configured, setConfigured] = React.useState({});
@@ -132,7 +155,7 @@ window.__ModuleLoader__.load({
         setBusy(true);
         try {
           const accepted = await form.set("servers", next);
-          setStatus(accepted ? "已保存" : "未保存：服务器拒绝了该配置（可能为只读）");
+          if (!accepted) setStatus("保存失败，请稍后重试");
           return accepted;
         } catch (error) {
           setStatus(`保存失败：${(error && error.message) || error}`);
@@ -142,141 +165,210 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const addServer = async () => {
-        const id = draft.id.trim();
-        const host = draft.host.trim();
-        const username = draft.username.trim();
-        if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) return setStatus("id 只能包含小写字母、数字和短横线");
-        if (!host) return setStatus("host 必填");
-        if (!username) return setStatus("username 必填");
-        if (servers.some((server) => server.id === id)) return setStatus("id 已存在");
-        const entry = { id, host, username, port: Number(draft.port) || 22, auth: draft.auth };
-        if (draft.label.trim()) entry.label = draft.label.trim();
-        if (draft.hostKey.trim()) entry.hostKey = draft.hostKey.trim();
-        if (draft.auth === "key") {
-          if (!draft.keyPath.trim()) return setStatus("私钥认证需要 keyPath");
-          entry.keyPath = draft.keyPath.trim();
-        } else {
-          if (!draft.password) return setStatus("密码认证需要填写密码");
-          entry.passwordRef = refFor(id);
-          try {
-            await remote.credentials.set(entry.passwordRef, draft.password);
-          } catch (error) {
-            return setStatus(`写凭据失败：${(error && error.message) || error}`);
-          }
-        }
-        if (await writeServers([...servers, entry])) setDraft(blankDraft());
+      const startAdd = () => {
+        setStatus("");
+        setDraft(emptyDraft());
+        setEditing("new");
       };
 
-      const removeServer = async (server) => {
+      const startEdit = (server) => {
+        setStatus("");
+        setDraft({
+          name: server.id,
+          label: server.label || "",
+          host: server.host,
+          port: String(server.port || 22),
+          username: server.username,
+          auth: server.auth || "password",
+          password: "",
+          keyPath: server.keyPath || "",
+          hostKey: server.hostKey || "",
+        });
+        setEditing(server.id);
+      };
+
+      const cancel = () => {
+        setEditing(null);
+        setStatus("");
+      };
+
+      const save = async () => {
+        const name = draft.name.trim();
+        const host = draft.host.trim();
+        const username = draft.username.trim();
+        const port = Number(draft.port) || 22;
+        if (!name) return setStatus("请填写名称");
+        if (!host) return setStatus("请填写地址");
+        if (!username) return setStatus("请填写用户名");
+        if (port < 1 || port > 65535) return setStatus("端口需在 1–65535 之间");
+
+        const isNew = editing === "new";
+        if (isNew && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+          return setStatus("名称只能包含小写字母、数字和短横线");
+        }
+        if (isNew && servers.some((server) => server.id === name)) return setStatus("该名称已被使用");
+
+        const previous = isNew ? null : servers.find((server) => server.id === editing) || null;
+        const entry = {
+          id: name,
+          host,
+          username,
+          port,
+          auth: draft.auth,
+        };
+        if (draft.label.trim()) entry.label = draft.label.trim();
+        if (draft.hostKey.trim()) entry.hostKey = draft.hostKey.trim();
+
+        if (draft.auth === "key") {
+          if (!draft.keyPath.trim()) return setStatus("请填写私钥路径");
+          entry.keyPath = draft.keyPath.trim();
+        } else {
+          const keepExisting = !isNew && previous && previous.auth !== "key";
+          if (!draft.password && !keepExisting) return setStatus("请填写密码");
+          entry.passwordRef = (previous && previous.passwordRef) || refFor(name);
+          if (draft.password) {
+            try {
+              await remote.credentials.set(entry.passwordRef, draft.password);
+            } catch (error) {
+              return setStatus(`密码保存失败：${(error && error.message) || error}`);
+            }
+          }
+        }
+
+        const next = isNew
+          ? [...servers, entry]
+          : servers.map((server) => (server.id === editing ? entry : server));
+
+        if (await writeServers(next)) {
+          setEditing(null);
+          setDraft(emptyDraft());
+          setStatus("已保存");
+        }
+      };
+
+      const remove = async (server) => {
         if (!(await writeServers(servers.filter((entry) => entry.id !== server.id)))) return;
         try {
           await remote.credentials.unset(server.passwordRef || refFor(server.id));
         } catch {
-          /* the config is already updated; a leftover credential is harmless */
+          /* config already updated */
         }
+        setStatus("已移除");
       };
 
-      const rows = servers.map((server) =>
-        h(
+      const formOpen = editing !== null;
+      const formTitle = editing === "new" ? "添加服务器" : "编辑服务器";
+
+      const rows = servers.map((server) => {
+        const missingPassword =
+          server.auth !== "key" && configured[server.passwordRef || refFor(server.id)] === false;
+        return h(
           "div",
-          { style: styles.card, key: server.id },
+          { style: css.row, key: server.id },
           h(
             "div",
-            { style: styles.row },
-            h("span", { style: styles.name }, server.label || server.id),
-            h("span", { style: styles.meta }, `${server.username}@${server.host}:${server.port || 22}`),
-            h("span", { style: styles.meta }, server.auth === "key" ? "私钥" : "密码"),
-            h("span", { style: styles.meta }, server.hostKey ? "指纹已固定" : "指纹未固定"),
-            server.auth !== "key"
-              ? h(
-                  "span",
-                  { style: styles.meta },
-                  configured[server.passwordRef || refFor(server.id)] ? "凭据已配置" : "缺少密码",
-                )
-              : null,
-            h("span", { style: styles.spacer }),
-            h(
-              "button",
-              {
-                type: "button",
-                style: { ...styles.button, ...styles.danger },
-                disabled: !writable || busy,
-                onClick: () => removeServer(server),
-              },
-              "移除",
-            ),
+            { style: css.rowMain },
+            h("span", { style: css.name }, server.label || server.id),
+            h("span", { style: css.sub }, `${server.username}@${server.host}:${server.port || 22}`),
+            missingPassword ? h("span", { style: css.warn }, "尚未保存密码") : null,
           ),
-        ),
-      );
+          h("button", { type: "button", style: css.link, disabled: !writable, onClick: () => startEdit(server) }, "编辑"),
+          h(
+            "button",
+            { type: "button", style: { ...css.link, ...css.linkDanger }, disabled: !writable, onClick: () => remove(server) },
+            "移除",
+          ),
+        );
+      });
+
+      const form = !formOpen
+        ? null
+        : h(
+            "div",
+            { style: css.form, key: "form" },
+            h("div", { style: { ...css.name, marginBottom: 10 } }, formTitle),
+            h(
+              "div",
+              { style: css.grid },
+              h(Field, { label: "名称" },
+                h("input", {
+                  style: css.input, value: draft.name, placeholder: "例如 hpc1",
+                  disabled: editing !== "new",
+                  onChange: (event) => update({ name: event.target.value }),
+                })),
+              h(Field, { label: "地址" },
+                h("input", {
+                  style: css.input, value: draft.host, placeholder: "主机名或 IP",
+                  onChange: (event) => update({ host: event.target.value }),
+                })),
+              h(Field, { label: "端口" },
+                h("input", {
+                  style: css.input, value: draft.port, inputMode: "numeric",
+                  onChange: (event) => update({ port: event.target.value }),
+                })),
+              h(Field, { label: "用户名" },
+                h("input", {
+                  style: css.input, value: draft.username, placeholder: "登录用户名",
+                  onChange: (event) => update({ username: event.target.value }),
+                })),
+              h(Field, { label: "认证方式" },
+                h("select", {
+                  style: css.input, value: draft.auth,
+                  onChange: (event) => update({ auth: event.target.value }),
+                }, h("option", { value: "password" }, "密码"), h("option", { value: "key" }, "私钥"))),
+              draft.auth === "key"
+                ? h(Field, { label: "私钥路径" },
+                    h("input", {
+                      style: css.input, value: draft.keyPath, placeholder: "本机私钥文件路径",
+                      onChange: (event) => update({ keyPath: event.target.value }),
+                    }))
+                : h(Field, { label: "密码" },
+                    h("input", {
+                      style: css.input, type: "password", value: draft.password,
+                      placeholder: editing === "new" ? "登录密码" : "留空则不修改",
+                      onChange: (event) => update({ password: event.target.value }),
+                    })),
+              h(Field, { label: "显示名称（可选）" },
+                h("input", {
+                  style: css.input, value: draft.label, placeholder: "例如 GPU 集群",
+                  onChange: (event) => update({ label: event.target.value }),
+                })),
+            ),
+            h(
+              "details",
+              { style: css.advanced },
+              h("summary", { style: { cursor: "pointer" } }, "高级"),
+              h(Field, { label: "主机指纹（可选）" },
+                h("input", {
+                  style: css.input, value: draft.hostKey, placeholder: "首次连接后可固定",
+                  onChange: (event) => update({ hostKey: event.target.value }),
+                })),
+            ),
+            h(
+              "div",
+              { style: css.actions },
+              h("button", { type: "button", style: { ...css.button, ...css.primary }, disabled: !writable || busy, onClick: save },
+                busy ? "保存中…" : "保存"),
+              h("button", { type: "button", style: css.button, onClick: cancel }, "取消"),
+              !writable ? h("span", { style: css.status }, "当前设置为只读") : null,
+            ),
+          );
 
       return h(
         "div",
-        { style: styles.root },
-        h("h3", { style: styles.title }, "远端服务器"),
+        { style: css.root },
         h(
-          "p",
-          { style: styles.hint },
-          "配置后，agent 可用 server_probe / run / ls / upload / download 等工具操作这些服务器。",
-          "密码写入 DSH 凭据库（与模型 API key 同一存储），不会进入 profile 配置；",
-          "私钥认证只记录本地路径。首次连接可在对话里让 agent 执行 server_test 并 pin 主机指纹。",
+          "div",
+          { style: css.head },
+          h("h3", { style: css.title }, "服务器"),
+          h("span", { style: css.grow }),
+          h("button", { type: "button", style: css.button, disabled: !writable || formOpen, onClick: startAdd }, "添加"),
         ),
-        servers.length === 0 ? h("div", { style: styles.empty }, "还没有配置服务器。") : rows,
-        h("div", { style: { ...styles.card, marginTop: 16 } },
-          h("div", { style: styles.name }, "添加服务器"),
-          h(
-            "div",
-            { style: styles.grid },
-            labeled("id（小写字母/数字/-）", h("input", {
-              style: styles.input, value: draft.id,
-              onChange: (event) => update({ id: event.target.value }), placeholder: "hpc1",
-            })),
-            labeled("显示名（可选）", h("input", {
-              style: styles.input, value: draft.label,
-              onChange: (event) => update({ label: event.target.value }), placeholder: "HPC login node",
-            })),
-            labeled("Host / IP", h("input", {
-              style: styles.input, value: draft.host,
-              onChange: (event) => update({ host: event.target.value }), placeholder: "10.0.0.5",
-            })),
-            labeled("端口", h("input", {
-              style: styles.input, value: draft.port,
-              onChange: (event) => update({ port: event.target.value }), placeholder: "22",
-            })),
-            labeled("用户名", h("input", {
-              style: styles.input, value: draft.username,
-              onChange: (event) => update({ username: event.target.value }), placeholder: "alice",
-            })),
-            labeled("认证方式", h("select", {
-              style: styles.input, value: draft.auth,
-              onChange: (event) => update({ auth: event.target.value }),
-            }, h("option", { value: "password" }, "密码"), h("option", { value: "key" }, "私钥"))),
-            draft.auth === "key"
-              ? labeled("私钥路径（本地）", h("input", {
-                  style: styles.input, value: draft.keyPath,
-                  onChange: (event) => update({ keyPath: event.target.value }), placeholder: "C:/Users/me/.ssh/id_ed25519",
-                }))
-              : labeled("密码（写入凭据库）", h("input", {
-                  style: styles.input, type: "password", value: draft.password,
-                  onChange: (event) => update({ password: event.target.value }), placeholder: "••••••",
-                })),
-            labeled("主机指纹（可选，首次连接后 pin）", h("input", {
-              style: styles.input, value: draft.hostKey,
-              onChange: (event) => update({ hostKey: event.target.value }), placeholder: "SHA256:...",
-            })),
-          ),
-          h("div", { style: styles.actions },
-            h("button", {
-              type: "button",
-              style: { ...styles.button, ...styles.primary },
-              disabled: !writable || busy,
-              onClick: addServer,
-            }, busy ? "保存中…" : "添加"),
-            !writable ? h("span", { style: styles.meta }, "当前部署的设置为只读或尚未就绪") : null,
-          ),
-        ),
-        h("div", { style: styles.status }, status),
-        snapshot.status === "unavailable" ? h("div", { style: styles.status }, "Host 未提供 multiservers 设置命名空间") : null,
+        h("p", { style: css.lead }, "管理 agent 可操作的远端机器。"),
+        servers.length === 0 && !formOpen ? h("div", { style: css.empty }, "还没有服务器。") : null,
+        form,
+        rows,
+        status ? h("div", { style: css.status }, status) : null,
       );
     }
 
@@ -284,9 +376,6 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       const page = { form: ctx.configForms.get(NS), remote: ctx.remote };
-      // Registered without the served-namespace guard so the page is visible even
-      // when the Host settings namespace is briefly unavailable; the card reports
-      // that state itself instead of disappearing silently.
       ctx.effect(
         () =>
           ctx.slots.inject("settings.section", () =>
@@ -295,7 +384,7 @@ window.__ModuleLoader__.load({
                 name: "settings.section",
                 id: "multiservers",
                 order: 40,
-                label: () => "Servers",
+                label: () => "服务器",
                 inject: () => page,
               },
               ServersSection,
