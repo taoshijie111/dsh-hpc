@@ -74,6 +74,10 @@ export const Config = Schema.object({
     .default(1800000)
     .description("Close idle shell sessions after this many milliseconds; 0 disables.")
     .volatile(),
+  sessionReadyTimeoutMs: Schema.number()
+    .default(30000)
+    .description("How long a new login shell may take to become ready before it is reported as failed.")
+    .volatile(),
 });
 
 /** Live section while the settings service is mounted; apply-time config otherwise. */
@@ -102,6 +106,7 @@ export function apply(ctx: Context, config: ConfigShape): void {
   const sessions = new SessionRegistry(pool, {
     maxPerServer: () => live().maxSessionsPerServer ?? 4,
     idleTimeoutMs: () => live().sessionIdleTimeoutMs ?? 1_800_000,
+    readyTimeoutMs: () => live().sessionReadyTimeoutMs ?? 30_000,
   });
   registerTools(ctx, live, pool, sessions);
   resumeWatchers(ctx, pool, () => live().servers);

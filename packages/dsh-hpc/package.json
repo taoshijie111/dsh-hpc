@@ -1,6 +1,6 @@
 {
   "name": "dsh-hpc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DeepSeek Harness plugin for HPC and remote servers: pooled SSH connections, sticky sessions, Slurm/bare-metal background jobs, resumable transfers, and a settings panel.",
   "type": "module",
   "main": "lib/index.js",
@@ -38,7 +38,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-client.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node test/tools-smoke.mjs",
+    "test": "node test/auth-prompts.mjs && node test/session-resilience.mjs",
+    "test:unit": "node test/auth-prompts.mjs && node test/session-resilience.mjs",
+    "test:resilience": "node test/session-resilience.mjs",
     "test:session": "node test/session-smoke.mjs",
     "test:transfer": "node test/transfer-smoke.mjs",
     "test:transfer:big": "node test/transfer-big.mjs",

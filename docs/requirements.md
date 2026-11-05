@@ -279,6 +279,16 @@
 | 兼容 | 不保留旧的全路径参数；缺少父目录参数直接报错 |
 | 验证 | `test/parent-dir.mjs` 8/8：文件/目录上传下载的 basename 追加、队列 targetDir、旧参数兼容、缺参报错 |
 
+### 9.11 崩溃修复：shell 启动失败不再致命（v1.9.5）
+
+| 项 | 实现 |
+| --- | --- |
+| 现象 | 使用 dsh-hpc 时桌面端偶发整进程退出：`dsh: fatal load failure: HpcError: Shell session did not become ready` 或 `Could not start a shell session: ...` |
+| 根因 | `ShellSession.pump()` 以 `void this.pump()` 触发；`await this.start()` 失败时 pump 的 Promise 无人处理，DSH 宿主把 unhandledRejection 视为致命并 `exit(1)` |
+| 触发 | SSH 通道打开失败（通道耗尽/连接抖动）或登录 shell 在 15s 内未就绪 |
+| 修复 | pump 捕获启动失败并把错误交给排队命令；`start()` 失败不再永久缓存；restart 串行化并向调用方抛错；关闭/超时路径统一结算；就绪改为数据驱动；默认就绪超时 30s 且可配（`sessionReadyTimeoutMs`）；ssh2 客户端握手后保留 error 兜底监听 |
+| 验证 | 新增 `test/session-resilience.mjs` 7/7；同一测试跑旧构建 6 项失败/挂起（复现未处理拒绝），新构建全过；`npm test` 通过 |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。
@@ -299,3 +309,4 @@
 - v1.7 长任务子系统：服务器类型/默认资源、作业账本、裸金属与 Slurm 双后端、4 个 job 工具
 - v1.8 本地 watcher + DSH 后台任务完成通知；job_wait；取消联动撤销监控
 - v1.9 设置界面重做：手动资源采样（连一次、采完断开）、CPU/GPU 可视化、表单布局修复
+- v1.9.5 崩溃修复：shell 启动/重连失败只报错不退出宿主；就绪超时可配；新增 session 回归测试

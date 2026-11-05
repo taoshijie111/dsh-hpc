@@ -43,6 +43,21 @@ type Pending = {
   totalBytes: number;
 };
 
+type Queued = {
+  command: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  resolve: (result: RunResult) => void;
+  reject: (error: Error) => void;
+};
+
+/** Normalize anything a failed start can throw into one HpcError message. */
+function sessionError(error: unknown, fallback: string): HpcError {
+  if (error instanceof HpcError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new HpcError(`${fallback}: ${message}`);
+}
+
 /**
  * A sticky shell: one long-lived `bash -l` process on an existing connection.
  * Commands are framed with a random sentinel so output boundaries and exit
@@ -53,8 +68,10 @@ export class ShellSession {
   private stream: ClientChannel | null = null;
   private buffer = "";
   private pending: Pending | null = null;
-  private queue: Array<{ command: string; timeoutMs: number; signal?: AbortSignal; resolve: (r: RunResult) => void }> = [];
+  private queue: Queued[] = [];
   private starting: Promise<void> | null = null;
+  private restarting: Promise<void> | null = null;
+  private pumping = false;
   private closed = false;
   private dead = false;
   private lastUsed = Date.now();
@@ -63,6 +80,7 @@ export class ShellSession {
     private readonly client: Client,
     readonly serverId: string,
     readonly name: string,
+    private readonly readyTimeoutMs = 15_000,
   ) {}
 
   get alive(): boolean {
@@ -75,45 +93,92 @@ export class ShellSession {
   }
 
   start(): Promise<void> {
-    this.starting ??= this.spawn();
+    if (!this.starting) {
+      const attempt = this.spawn();
+      this.starting = attempt;
+      // A failed start must neither become an unhandled rejection nor poison
+      // later attempts: current awaiters still see the rejection, but the
+      // cached promise is cleared so the next call can spawn again.
+      void attempt.catch(() => {
+        if (this.starting === attempt) this.starting = null;
+      });
+    }
     return this.starting;
   }
 
   private spawn(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: NodeJS.Timeout | null = null;
+
+      const succeed = (): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        timer = null;
+        this.buffer = "";
+        resolve();
+      };
+      const fail = (message: string): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        timer = null;
+        const stream = this.stream;
+        this.stream = null;
+        this.dead = true;
+        try {
+          stream?.close();
+        } catch {
+          /* already gone */
+        }
+        reject(new HpcError(message));
+      };
+
       this.client.exec("bash -l", (error, stream) => {
+        if (settled) {
+          try {
+            stream?.close();
+          } catch {
+            /* already gone */
+          }
+          return;
+        }
         if (error) {
-          reject(new HpcError(`Could not start a shell session: ${error.message}`));
+          fail(`Could not start a shell session: ${error.message}`);
           return;
         }
         this.stream = stream;
         this.dead = false;
-        const readyToken = randomBytes(12).toString("hex");
-        const readyMarker = `${MARKER}READY:${readyToken}${MARKER}`;
-        stream.on("data", (chunk: Buffer) => this.onData(chunk));
+        const readyMarker = `${MARKER}READY:${randomBytes(12).toString("hex")}${MARKER}`;
+        stream.on("data", (chunk: Buffer) => {
+          this.onData(chunk);
+          if (!settled && this.buffer.includes(readyMarker)) succeed();
+        });
         stream.stderr.on("data", (chunk: Buffer) => {
           if (this.pending) this.pending.stderr += chunk.toString("utf8");
         });
-        stream.on("close", () => this.onClose());
-        stream.on("error", () => this.onClose());
+        stream.on("close", () => {
+          if (!settled) {
+            fail("Shell session closed before it became ready");
+            return;
+          }
+          this.onClose();
+        });
+        stream.on("error", (streamError: Error) => {
+          if (!settled) {
+            fail(`Shell session failed before it became ready: ${streamError.message}`);
+            return;
+          }
+          this.onClose();
+        });
 
         // Login-shell startup output is allowed to arrive first; it is discarded
         // once the readiness marker is seen.
         stream.write(`printf '${readyMarker}\n'
 `);
-        const poll = setInterval(() => {
-          if (!this.buffer.includes(readyMarker)) return;
-          clearInterval(poll);
-          clearTimeout(fail);
-          this.buffer = "";
-          resolve();
-        }, 10);
-        poll.unref?.();
-        const fail = setTimeout(() => {
-          clearInterval(poll);
-          reject(new HpcError("Shell session did not become ready"));
-        }, 15_000);
-        fail.unref?.();
+        timer = setTimeout(() => fail("Shell session did not become ready"), this.readyTimeoutMs);
+        timer.unref?.();
       });
     });
   }
@@ -164,7 +229,7 @@ export class ShellSession {
       totalBytes: pending.totalBytes,
     });
     this.lastUsed = Date.now();
-    void this.pump();
+    this.pumpInBackground();
   }
 
   private onClose(): void {
@@ -211,41 +276,89 @@ export class ShellSession {
   }
 
   private enqueue(command: string, timeoutMs: number, signal: AbortSignal | undefined): Promise<RunResult> {
-    return new Promise<RunResult>((resolve) => {
-      this.queue.push({ command, timeoutMs, resolve, ...(signal ? { signal } : {}) });
-      void this.pump();
+    return new Promise<RunResult>((resolve, reject) => {
+      if (this.closed) {
+        reject(new HpcError(`Session "${this.name}" is closed`));
+        return;
+      }
+      this.queue.push({ command, timeoutMs, resolve, reject, ...(signal ? { signal } : {}) });
+      this.pumpInBackground();
     });
   }
 
+  private pumpInBackground(): void {
+    void this.pump().catch(() => undefined);
+  }
+
   private async pump(): Promise<void> {
-    if (this.pending) return;
-    const next = this.queue.shift();
-    if (!next) return;
-    await this.start();
-    const pending: Pending = {
-      token: randomBytes(10).toString("hex"),
-      stdout: "",
-      stderr: "",
-      resolve: next.resolve,
-      startedAt: Date.now(),
-      timeoutMs: next.timeoutMs,
-      timer: null,
-      ...(next.signal ? { signal: next.signal } : {}),
-      truncated: false,
-      totalBytes: 0,
-    };
-    this.pending = pending;
-    const stream = this.stream!;
-    const payload = `${next.command}\n__mss_rc=$?\nprintf '${MARKER}${pending.token}:%s:%s${MARKER}\\n' "$__mss_rc" "$PWD"\n`;
-    stream.write(payload);
-    pending.timer = setTimeout(() => {
-      void this.resetAfterTimeout(pending);
-    }, next.timeoutMs);
-    pending.timer.unref?.();
-    pending.onAbort = () => {
-      void this.resetAfterTimeout(pending);
-    };
-    if (pending.signal) pending.signal.addEventListener("abort", pending.onAbort, { once: true });
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      if (this.pending) return;
+      const next = this.queue.shift();
+      if (!next) return;
+      try {
+        await this.start();
+      } catch (error) {
+        // A dead shell must fail the pending commands, never escape as an
+        // unhandled rejection: the DSH host treats those as fatal and exits.
+        this.dead = true;
+        const failure = sessionError(error, `Could not start session "${this.name}"`);
+        next.reject(failure);
+        this.rejectQueue(failure);
+        return;
+      }
+      if (this.closed) {
+        const failure = new HpcError(`Session "${this.name}" is closed`);
+        next.reject(failure);
+        this.rejectQueue(failure);
+        return;
+      }
+      const pending: Pending = {
+        token: randomBytes(10).toString("hex"),
+        stdout: "",
+        stderr: "",
+        resolve: next.resolve,
+        startedAt: Date.now(),
+        timeoutMs: next.timeoutMs,
+        timer: null,
+        ...(next.signal ? { signal: next.signal } : {}),
+        truncated: false,
+        totalBytes: 0,
+      };
+      this.pending = pending;
+      const stream = this.stream;
+      if (!stream) {
+        this.pending = null;
+        next.reject(new HpcError(`Session "${this.name}" lost its shell before the command could run`));
+        return;
+      }
+      const payload = `${next.command}\n__mss_rc=$?\nprintf '${MARKER}${pending.token}:%s:%s${MARKER}\\n' "$__mss_rc" "$PWD"\n`;
+      try {
+        stream.write(payload);
+      } catch (error) {
+        this.pending = null;
+        this.dead = true;
+        next.reject(sessionError(error, `Could not write to session "${this.name}"`));
+        return;
+      }
+      pending.timer = setTimeout(() => {
+        void this.resetAfterTimeout(pending).catch(() => undefined);
+      }, next.timeoutMs);
+      pending.timer.unref?.();
+      pending.onAbort = () => {
+        void this.resetAfterTimeout(pending).catch(() => undefined);
+      };
+      if (pending.signal) pending.signal.addEventListener("abort", pending.onAbort, { once: true });
+    } finally {
+      this.pumping = false;
+    }
+  }
+
+  private rejectQueue(error: Error): void {
+    const queued = this.queue;
+    this.queue = [];
+    for (const item of queued) item.reject(error);
   }
 
   private async resetAfterTimeout(pending: Pending): Promise<void> {
@@ -273,19 +386,33 @@ export class ShellSession {
       truncated: pending.truncated,
       totalBytes: pending.totalBytes,
     });
-    if (!this.closed) await this.restart();
-    if (!this.pending) void this.pump();
+    if (!this.closed) {
+      try {
+        await this.restart();
+      } catch {
+        this.dead = true;
+      }
+    }
+    if (!this.pending) this.pumpInBackground();
   }
 
-  private async restart(): Promise<void> {
+  private restart(): Promise<void> {
+    this.restarting ??= this.doRestart().finally(() => {
+      this.restarting = null;
+    });
+    return this.restarting;
+  }
+
+  private async doRestart(): Promise<void> {
     this.stream = null;
-    this.dead = false;
     this.buffer = "";
+    this.dead = false;
     this.starting = null;
     try {
       await this.start();
-    } catch {
+    } catch (error) {
       this.dead = true;
+      throw sessionError(error, `Could not start session "${this.name}" on "${this.serverId}"`);
     }
   }
 
@@ -325,7 +452,12 @@ export class SessionRegistry {
 
   constructor(
     private readonly pool: ConnectionPool,
-    private readonly options: { maxPerServer: () => number; idleTimeoutMs: () => number },
+    private readonly options: {
+      maxPerServer: () => number;
+      idleTimeoutMs: () => number;
+      /** How long `bash -l` may take before the session counts as failed. */
+      readyTimeoutMs?: () => number;
+    },
   ) {}
 
   private sweepTimer: NodeJS.Timeout | null = null;
@@ -342,7 +474,9 @@ export class SessionRegistry {
       const now = Date.now();
       for (const session of [...this.sessions.values()]) {
         if (!session.alive || session.busy) continue;
-        if (now - Date.parse(session.describe().lastUsedAt) > timeout) void this.close(session.serverId, session.name);
+        if (now - Date.parse(session.describe().lastUsedAt) > timeout) {
+          void this.close(session.serverId, session.name).catch(() => undefined);
+        }
       }
     }
     if (this.sessions.size === 0 && this.sweepTimer) {
@@ -373,7 +507,7 @@ export class SessionRegistry {
       );
     }
     const connection = await this.pool.ensure(ctx, server);
-    const session = new ShellSession(connection.client, serverId, name);
+    const session = new ShellSession(connection.client, serverId, name, this.options.readyTimeoutMs?.() ?? 15_000);
     await session.start();
     this.sessions.set(key, session);
     this.pool.attachSession(serverId, name);

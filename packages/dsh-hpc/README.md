@@ -120,6 +120,14 @@ The settings page cannot prompt for a code, so for 2FA servers connect once from
 `server_test(profile: true)` reports reachability, the host-key fingerprint and the detected
 scheduler; approve the fingerprint in the settings page (the agent never pins it silently).
 
+### Failure behaviour
+
+A failed connection or shell start is reported as a tool error — for example
+`Could not start a shell session: ...` — and never terminates the DSH host. A failed start is
+retried by the next call, and commands that were already queued receive the error instead of
+hanging. If login nodes need a long time to start a shell (heavy `module load` in
+`/etc/profile.d`), raise `sessionReadyTimeoutMs`.
+
 ## Tools (17)
 
 | Group | Tools |
@@ -149,6 +157,7 @@ cd packages/dsh-hpc
 npm install
 npm run build        # tsc + client syntax gate
 npm run typecheck
+npm test             # unit tests: auth prompts + session resilience
 ```
 
 Integration tests run against real SSH hosts and are skipped unless the environment is
@@ -164,6 +173,7 @@ npm run test:transfer:big   # GB-scale benchmark
 npm run test:parent-dir     # explicit parent-directory semantics
 npm run test:tools
 npm run test:session
+npm run test:resilience   # failing shell start must surface as an error, never crash the host
 ```
 
 ## Configuration reference
@@ -176,6 +186,7 @@ npm run test:session
 | `idleTimeoutMs` | 600000 | Close idle connections (0 = never) |
 | `maxSessionsPerServer` | 4 | Named shell sessions per server |
 | `sessionIdleTimeoutMs` | 1800000 | Reap idle shell sessions (0 = never) |
+| `sessionReadyTimeoutMs` | 30000 | Max wait for a new login shell to become ready |
 
 Per-server fields: `id`, `host`, `port`, `username`, `label`, `auth`, `passwordRef`,
 `keyPath`, `keyPassphraseRef`, `hostKey`, `kind`, `resolvedKind`, `schedulerDefaults`,

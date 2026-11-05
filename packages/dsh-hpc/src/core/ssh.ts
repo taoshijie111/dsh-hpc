@@ -123,10 +123,18 @@ export async function connect(ctx: Context, server: ServerSpec, options: Connect
           sawCodePrompt: sawVerificationPrompt,
         });
 
+      // ssh2 may report several socket/auth errors on one client. A raw
+      // EventEmitter 'error' with no listener throws and kills the DSH host, so
+      // keep a sink installed once the handshake outcome is known.
+      const swallowLateErrors = (): void => {
+        client.on("error", () => undefined);
+      };
       client.once("error", (error: Error) => {
+        swallowLateErrors();
         reject(new HpcError(diagnostics(error.message)));
       });
       client.once("ready", () => {
+        swallowLateErrors();
         resolve({ client, fingerprint: observed, close: () => client.end() });
       });
       client.connect(connectConfig);

@@ -41,6 +41,8 @@ export interface Config {
   maxSessionsPerServer?: number;
   /** Close a shell session after this many idle milliseconds; 0 disables. */
   sessionIdleTimeoutMs?: number;
+  /** How long a new login shell may take to become ready, in milliseconds. */
+  sessionReadyTimeoutMs?: number;
 }
 
 export interface ExecResult {
