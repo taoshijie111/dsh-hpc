@@ -545,6 +545,10 @@ export function registerTools(
             resolve(address.port);
           });
         });
+        // The one-shot listener above only covers listen() failures. A later
+        // net.Server 'error' would be an uncaught EventEmitter error and kill
+        // the DSH host, so keep a sink after the listener is up.
+        localServer.on("error", () => undefined);
         pool.addForward(state, { localPort, remoteHost, remotePort: args.remotePort, server: localServer });
         return { server: server.id, localPort, remoteHost, remotePort: args.remotePort, closed: false };
       },
