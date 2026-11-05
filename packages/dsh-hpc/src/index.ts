@@ -113,7 +113,20 @@ export function apply(ctx: Context, config: ConfigShape): void {
   setApiContext(ctx);
   ctx.inject(["webServer"], (injected) => {
     const webServer = (injected as unknown as { webServer?: { register(route: never): () => void } }).webServer;
-    if (webServer?.register) registerApi(webServer as never, live, pool, sessions);
+    if (!webServer?.register) return;
+    const disposers = registerApi(webServer as never, live, pool, sessions);
+    ctx.effect(
+      () => () => {
+        for (const dispose of disposers) {
+          try {
+            dispose();
+          } catch {
+            /* already removed */
+          }
+        }
+      },
+      "dsh-hpc: unregister HTTP routes on unload",
+    );
   });
   ctx.effect(
     () => () => {

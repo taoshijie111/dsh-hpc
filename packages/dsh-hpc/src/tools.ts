@@ -524,20 +524,37 @@ export function registerTools(
         }
         if (!args.remotePort) throw new HpcError("remotePort is required");
         const remoteHost = args.remoteHost ?? "127.0.0.1";
+        let localPort = 0;
         const localServer = createServer((socket) => {
-          state.client.forwardOut("127.0.0.1", socket.remotePort ?? 0, remoteHost, args.remotePort!, (error, stream) => {
-            if (error) {
+          // The SSH channel-open round trip takes time; the accepted socket needs
+          // an 'error' listener from the first tick, otherwise a local reset in
+          // that window becomes an uncaught exception in the DSH host.
+          socket.on("error", () => {
+            try {
               socket.destroy();
-              return;
+            } catch {
+              /* already closed */
             }
-            socket.pipe(stream).pipe(socket);
-            socket.on("error", () => stream.destroy());
-            stream.on("error", () => socket.destroy());
-            socket.on("close", () => stream.destroy());
-            stream.on("close", () => socket.destroy());
           });
+          try {
+            state.client.forwardOut("127.0.0.1", socket.remotePort ?? 0, remoteHost, args.remotePort!, (error, stream) => {
+              if (error) {
+                socket.destroy();
+                return;
+              }
+              socket.pipe(stream).pipe(socket);
+              stream.on("error", () => socket.destroy());
+              socket.on("close", () => stream.destroy());
+              stream.on("close", () => socket.destroy());
+            });
+          } catch {
+            // forwardOut throws synchronously when the pooled client is gone;
+            // drop this connection and retire the forward.
+            socket.destroy();
+            pool.closeForward(state, localPort);
+          }
         });
-        const localPort = await new Promise<number>((resolve, reject) => {
+        localPort = await new Promise<number>((resolve, reject) => {
           localServer.once("error", reject);
           localServer.listen(args.localPort ?? 0, "127.0.0.1", () => {
             const address = localServer.address();

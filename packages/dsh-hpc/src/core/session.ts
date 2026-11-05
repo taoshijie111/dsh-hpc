@@ -163,14 +163,14 @@ export class ShellSession {
             fail("Shell session closed before it became ready");
             return;
           }
-          this.onClose();
+          this.onClose(stream);
         });
         stream.on("error", (streamError: Error) => {
           if (!settled) {
             fail(`Shell session failed before it became ready: ${streamError.message}`);
             return;
           }
-          this.onClose();
+          this.onClose(stream);
         });
 
         // Login-shell startup output is allowed to arrive first; it is discarded
@@ -232,7 +232,12 @@ export class ShellSession {
     this.pumpInBackground();
   }
 
-  private onClose(): void {
+  /**
+   * `closed` identifies the stream that went away. A close event from a stream
+   * that restart() already replaced must not tear the new one down.
+   */
+  private onClose(closed?: ClientChannel): void {
+    if (closed && this.stream && this.stream !== closed) return;
     this.dead = true;
     this.stream = null;
     const pending = this.pending;
@@ -330,7 +335,9 @@ export class ShellSession {
       const stream = this.stream;
       if (!stream) {
         this.pending = null;
-        next.reject(new HpcError(`Session "${this.name}" lost its shell before the command could run`));
+        const failure = new HpcError(`Session "${this.name}" lost its shell before the command could run`);
+        next.reject(failure);
+        this.rejectQueue(failure);
         return;
       }
       const payload = `${next.command}\n__mss_rc=$?\nprintf '${MARKER}${pending.token}:%s:%s${MARKER}\\n' "$__mss_rc" "$PWD"\n`;
@@ -339,7 +346,9 @@ export class ShellSession {
       } catch (error) {
         this.pending = null;
         this.dead = true;
-        next.reject(sessionError(error, `Could not write to session "${this.name}"`));
+        const failure = sessionError(error, `Could not write to session "${this.name}"`);
+        next.reject(failure);
+        this.rejectQueue(failure);
         return;
       }
       pending.timer = setTimeout(() => {
@@ -404,10 +413,16 @@ export class ShellSession {
   }
 
   private async doRestart(): Promise<void> {
+    const previous = this.stream;
     this.stream = null;
     this.buffer = "";
     this.dead = false;
     this.starting = null;
+    try {
+      previous?.close();
+    } catch {
+      /* already gone */
+    }
     try {
       await this.start();
     } catch (error) {

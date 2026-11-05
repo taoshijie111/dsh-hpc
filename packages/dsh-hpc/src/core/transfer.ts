@@ -55,6 +55,9 @@ function sftpOf(client: Client): Promise<SFTPWrapper> {
  */
 async function withSftp<T>(client: Client, task: (sftp: SFTPWrapper) => Promise<T>): Promise<T> {
   const sftp = await sftpOf(client);
+  // ssh2 removes its own error handler once SFTP is ready; a later protocol
+  // error would otherwise be an uncaught EventEmitter error and kill the host.
+  sftp.on("error", () => undefined);
   try {
     return await task(sftp);
   } finally {
@@ -338,6 +341,7 @@ async function downloadFile(
   const chunkSize = options.chunkSize ?? (remoteSize > 256 * 1024 * 1024 ? 8 * 1024 * 1024 : remoteSize > 32 * 1024 * 1024 ? 4 * 1024 * 1024 : 256 * 1024);
   let transferred = offset;
   if (offset === 0) {
+    shouldAbort(options.signal);
     await new Promise<void>((resolve, reject) => {
       sftp.fastGet(remotePath, partPath, {
         concurrency: 32,
@@ -347,23 +351,41 @@ async function downloadFile(
     });
     shouldAbort(options.signal);
     transferred = remoteSize;
-  } else await new Promise<void>((resolve, reject) => {
-    const out = createWriteStream(partPath, { flags: "a" });
-    const input = sftp.createReadStream(remotePath, { start: offset, highWaterMark: chunkSize });
-    input.on("error", reject);
-    out.on("error", reject);
-    out.on("close", () => resolve());
-    input.on("data", (chunk: Buffer) => {
-      transferred += chunk.length;
-      options.onProgress?.(transferred, remoteSize);
+  } else {
+    shouldAbort(options.signal);
+    await new Promise<void>((resolve, reject) => {
+      const out = createWriteStream(partPath, { flags: "a" });
+      const input = sftp.createReadStream(remotePath, { start: offset, highWaterMark: chunkSize });
+      const onAbort = () => {
+        input.destroy();
+        out.destroy();
+        reject(new HpcError("Transfer cancelled"));
+      };
+      const cleanup = () => options.signal?.removeEventListener("abort", onAbort);
+      input.on("error", (error: Error) => {
+        cleanup();
+        reject(error);
+      });
+      out.on("error", (error: Error) => {
+        cleanup();
+        reject(error);
+      });
+      out.on("close", () => {
+        cleanup();
+        resolve();
+      });
+      input.on("data", (chunk: Buffer) => {
+        transferred += chunk.length;
+        options.onProgress?.(transferred, remoteSize);
+      });
+      input.pipe(out);
+      if (options.signal?.aborted) {
+        onAbort();
+        return;
+      }
+      options.signal?.addEventListener("abort", onAbort, { once: true });
     });
-    input.pipe(out);
-    options.signal?.addEventListener("abort", () => {
-      input.destroy();
-      out.destroy();
-      reject(new HpcError("Transfer cancelled"));
-    });
-  });
+  }
 
   const partSha = await digestFile(partPath);
   if (remoteSha !== null && partSha !== remoteSha) {

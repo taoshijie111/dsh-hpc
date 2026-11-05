@@ -203,6 +203,16 @@ export function execRemote(
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
     client.exec(wrapped, (error, stream) => {
+      if (settled) {
+        // The timeout/abort already resolved; drop the late channel instead of
+        // leaving it open and buffering output forever.
+        try {
+          stream?.close();
+        } catch {
+          /* already closed */
+        }
+        return;
+      }
       if (error) {
         clearTimeout(timer);
         options.signal?.removeEventListener("abort", onAbort);
