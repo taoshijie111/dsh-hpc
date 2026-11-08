@@ -3,6 +3,14 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
+import {
+  applySlurmEscalation,
+  classifyBare,
+  classifySlurmScontrol,
+  mapSlurmState,
+  planSlurmPoll,
+  type Verdict,
+} from "./jobstate.js";
 import type { ConnectionPool } from "./pool.js";
 import { execRemote } from "./ssh.js";
 import { HpcError, shellQuote, type Config, type ServerSpec } from "./types.js";
@@ -47,6 +55,10 @@ export type JobRecord = {
   pidStart?: string;
   state: JobState;
   exitCode?: number | null;
+  /** Consecutive polls that could not resolve a state (drives the escalation). */
+  unknownPolls?: number;
+  /** Explanation stored when a job ends ambiguously (surfaced in the job output). */
+  note?: string;
   /** DSH background job id watching this remote job, when registered. */
   watchJobId?: string;
   createdAt: string;
@@ -291,19 +303,13 @@ async function refreshBare(ctx: Context, pool: ConnectionPool, server: ServerSpe
   );
   const line = probe.stdout.trim();
   record.lastCheckedAt = new Date().toISOString();
-  if (line.startsWith("EXIT:")) {
-    const code = Number(line.slice(5).trim());
-    record.exitCode = Number.isFinite(code) ? code : null;
-    record.state = record.state === "cancelled" ? "cancelled" : code === 0 ? "completed" : "failed";
-  } else if (line.startsWith("ALIVE:")) {
-    const start = line.slice(6).trim();
-    if (record.pidStart && start && start !== record.pidStart) {
-      record.state = "lost";
-    } else if (record.state !== "cancelled") {
-      record.state = "running";
-    }
-  } else {
-    record.state = record.state === "cancelled" ? "cancelled" : "lost";
+  const verdict = classifyBare(record, line);
+  applyVerdict(record, verdict);
+  if (verdict.state === "lost") {
+    // A lost process leaves no exit code; the last lines of output are the only
+    // clue left, so attach them instead of returning a bare "lost".
+    const tail = await outputTail(ctx, pool, server, record);
+    if (tail) record.note = `${verdict.note ?? "作业已丢失"}\n输出末尾:\n${tail}`;
   }
   saveJob(record);
   return record;
@@ -314,9 +320,11 @@ async function refreshSlurm(ctx: Context, pool: ConnectionPool, server: ServerSp
   const id = record.schedulerJobId ?? "";
   const queue = await execRemote(state.client, `squeue -h -j ${id} -o %T 2>/dev/null || true`, { timeoutMs: 20_000 });
   record.lastCheckedAt = new Date().toISOString();
-  const running = queue.stdout.trim().toUpperCase();
-  if (running) {
-    record.state = running.startsWith("PENDING") ? "queued" : "running";
+  const queued = mapSlurmState(queue.stdout);
+  if (queued) {
+    // While the job is still in the queue nothing else needs to be asked.
+    record.unknownPolls = 0;
+    applyVerdict(record, queued);
     saveJob(record);
     return record;
   }
@@ -325,23 +333,73 @@ async function refreshSlurm(ctx: Context, pool: ConnectionPool, server: ServerSp
     `sacct -j ${id} -n -P --format=State,ExitCode,Elapsed 2>/dev/null | head -1 || true`,
     { timeoutMs: 20_000 },
   );
-  const row = accounting.stdout.trim().split("|");
-  const stateText = (row[0] ?? "").split(" ")[0] ?? "";
-  if (!stateText) {
-    record.state = "unknown";
-  } else if (stateText.startsWith("COMPLETED")) {
-    const code = Number((row[1] ?? "0:0").split(":")[0]);
-    record.exitCode = Number.isFinite(code) ? code : null;
-    record.state = code === 0 ? "completed" : "failed";
-  } else if (stateText.startsWith("CANCELLED")) {
-    record.state = "cancelled";
-  } else if (/FAILED|TIMEOUT|OUT_OF_MEMORY|NODE_FAIL|PREEMPTED|BOOT_FAIL|DEADLINE/.test(stateText)) {
-    record.state = "failed";
-  } else {
-    record.state = "unknown";
+  const plan = planSlurmPoll({
+    unknownPolls: record.unknownPolls ?? 0,
+    queue: queue.stdout,
+    accounting: accounting.stdout,
+  });
+  record.unknownPolls = plan.unknownPolls;
+  let verdict = plan.verdict;
+  if (!verdict && plan.escalate) {
+    // Accounting is off or lagging. Ask the controller directly, then fall back
+    // to the output files instead of spinning until the 15-minute poll cap.
+    const scontrol = await execRemote(state.client, `scontrol show job ${id} -o 2>&1 || true`, {
+      timeoutMs: 20_000,
+    });
+    const silent = classifySlurmScontrol(scontrol.stdout)
+      ? undefined
+      : await outputSilenceMs(ctx, pool, server, record);
+    verdict = applySlurmEscalation({ scontrol: scontrol.stdout, outputSilentMs: silent });
+    if (verdict.state !== "unknown") record.unknownPolls = 0;
   }
+  applyVerdict(record, verdict ?? { state: "unknown" });
   saveJob(record);
   return record;
+}
+
+function applyVerdict(record: JobRecord, verdict: Verdict): void {
+  record.state = verdict.state;
+  if (verdict.exitCode !== undefined) record.exitCode = verdict.exitCode;
+  if (verdict.note !== undefined) record.note = verdict.note;
+}
+
+/** Age of the newest write to the job's out/err files, or undefined when neither exists. */
+async function outputSilenceMs(
+  ctx: Context,
+  pool: ConnectionPool,
+  server: ServerSpec,
+  record: JobRecord,
+): Promise<number | undefined> {
+  const state = await pool.ensure(ctx, server);
+  const result = await execRemote(
+    state.client,
+    `for f in ${shellQuote(record.outPath)} ${shellQuote(record.errPath)}; do [ -f "$f" ] && stat -c %Y "$f" 2>/dev/null; [ -f "$f" ] && stat -f %m "$f" 2>/dev/null; done; true`,
+    { timeoutMs: 15_000 },
+  );
+  const stamps = result.stdout
+    .split(/\s+/)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (stamps.length === 0) return undefined;
+  return Math.max(0, Date.now() - Math.max(...stamps) * 1000);
+}
+
+/** Last lines of a job's stdout, used to explain a lost bare-metal process. */
+async function outputTail(
+  ctx: Context,
+  pool: ConnectionPool,
+  server: ServerSpec,
+  record: JobRecord,
+  lines = 20,
+): Promise<string> {
+  const state = await pool.ensure(ctx, server);
+  const result = await execRemote(
+    state.client,
+    `tail -n ${lines} ${shellQuote(record.outPath)} 2>/dev/null || true`,
+    { timeoutMs: 15_000 },
+  );
+  const text = result.stdout.trim();
+  return text.length > 4000 ? `...${text.slice(-4000)}` : text;
 }
 
 /** Reconcile one ledger record with the scheduler or process. */

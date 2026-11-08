@@ -289,6 +289,18 @@
 | 修复 | pump 捕获启动失败并把错误交给排队命令；`start()` 失败不再永久缓存；restart 串行化并向调用方抛错；关闭/超时路径统一结算；就绪改为数据驱动；默认就绪超时 30s 且可配（`sessionReadyTimeoutMs`）；ssh2 客户端握手后保留 error 兜底监听 |
 | 验证 | 新增 `test/session-resilience.mjs` 7/7；同一测试跑旧构建 6 项失败/挂起（复现未处理拒绝），新构建全过；`npm test` 通过 |
 
+### 9.12 作业看门狗绑定与收尾（v1.9.7）
+
+| 项 | 实现 |
+| --- | --- |
+| 绑定句柄 | Slurm 用 `JOBID`：`sbatch --parsable` 解析后入账本，轮询 `squeue -j <id> -o %T` 与 `sacct -j <id>`；裸机用 `PID` + `/proc/<pid>/stat` 启动时间（防 PID 复用）+ `.exit` 退出码文件 |
+| unknown 熔断 | 连续 3 次判定不出状态后升级复核：`scontrol show job <id> -o` 明确报"作业号不存在"且输出静默 ≥60s → `lost` 并写明原因；控制器不可达（重启/超时）保持 `unknown`，不伪造终态（此前会空转到 15 分钟轮询上限） |
+| 2FA 保活 | watcher 存活期间对该 server 执行 `pool.hold()`，空闲回收跳过这条连接；作业终结或 watcher 取消后 `release()`。解决 2FA 主机断连后无法自动重新认证、作业永远收不到结果的问题 |
+| lost 兜底 | 裸机判 `lost` 时把 `.out` 尾部 20 行写入账本 `note`，同时进入后台任务输出与完成通知；Slurm `lost` 的 note 说明会计记录缺失与输出静默时长 |
+| 取消即时 | watcher 的 `sleep()` 改为可被唤醒：`job_kill` 取消后立即退出，不再等一个最长 15 分钟的轮询间隔 |
+| 失败兜底 | 探针命令失败（空输出）不再当成"进程消失"，裸机返回 `unknown` 继续观察 |
+| 验证 | 新增 `test/job-watchdog.mjs` 28/28（判定表、scontrol 复核、控制器不可达、PID 复用、可取消 sleep、hold/release 与空闲回收）；`npm test` 全过 |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。
@@ -311,3 +323,4 @@
 - v1.9 设置界面重做：手动资源采样（连一次、采完断开）、CPU/GPU 可视化、表单布局修复
 - v1.9.5 崩溃修复：shell 启动/重连失败只报错不退出宿主；就绪超时可配；新增 session 回归测试
 - v1.9.6 健壮性加固：转发 socket / SFTP / 临时连接 / 迟到 channel 的 error 兜底，onClose 归属判断，队列失败不再挂起，路由卸载清理
+- v1.9.7 作业看门狗加固：绑定 JOBID / PID+启动时间，unknown 熔断与 scontrol 复核，2FA 连接保活，lost 输出尾部，watcher 取消即时

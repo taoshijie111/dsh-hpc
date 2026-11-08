@@ -128,6 +128,27 @@ retried by the next call, and commands that were already queued receive the erro
 hanging. If login nodes need a long time to start a shell (heavy `module load` in
 `/etc/profile.d`), raise `sessionReadyTimeoutMs`.
 
+### How jobs are watched
+
+`job_submit` binds every job to a stable handle and follows it from this host, so the completion
+notice arrives without polling in the chat:
+
+- A Slurm job is tracked by its `JOBID`: the watcher asks `squeue` while the job is queued or
+  running, and `sacct` for the final state and exit code. If accounting is disabled or lagging,
+  three unresolved polls escalate to `scontrol show job`; a job the controller no longer knows,
+  whose output has been silent for 60 s, is reported as `lost` with an explanation. A controller
+  that is merely unreachable (restart, socket timeout) stays `unknown` instead of fabricating a
+  result.
+- A bare-metal job is tracked by its PID plus the kernel start time of that PID. The exit code is
+  read from the job's `.exit` file; a live PID whose start time no longer matches means the PID was
+  reused and the job is `lost`, and a vanished process is reported as `lost` together with the tail
+  of its output.
+
+The watcher pins the SSH connection while it watches, so idle reaping leaves that server alone.
+This matters on 2FA hosts: the authenticated connection is what lets the next poll succeed without
+asking for a fresh code. Watchers survive a plugin reload — unfinished jobs in the ledger are
+re-armed on load — and `job_kill` stops a watcher immediately, even while it sleeps between polls.
+
 ## Tools (17)
 
 | Group | Tools |

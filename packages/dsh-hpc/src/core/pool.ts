@@ -33,10 +33,14 @@ export type PoolOptions = {
   keepaliveIntervalMs: () => number;
   /** 0 disables idle reaping. */
   idleTimeoutMs: () => number;
+  /** Connection factory; injected by tests, defaults to the real SSH connect. */
+  connect?: typeof connect;
 };
 
 export class ConnectionPool {
   private readonly entries = new Map<string, ConnectionState>();
+  /** Servers that must not be idle-reaped (a watcher is following a job on them). */
+  private readonly holds = new Map<string, number>();
   private closed = false;
 
   constructor(private readonly options: PoolOptions) {}
@@ -54,7 +58,7 @@ export class ConnectionPool {
     }
     if (existing) this.forget(server.id);
 
-    const connection = await connect(ctx, server, {
+    const connection = await (this.options.connect ?? connect)(ctx, server, {
       connectTimeoutMs: this.options.connectTimeoutMs(),
       keepaliveIntervalMs: this.options.keepaliveIntervalMs(),
       expectedFingerprint: server.hostKey ?? null,
@@ -136,6 +140,30 @@ export class ConnectionPool {
     this.forget(serverId);
   }
 
+  /**
+   * Keep this server's connection out of idle reaping. The job watcher holds a
+   * server while it follows a job: reconnecting is cheap on password-only
+   * hosts, but a 2FA host would lose the connection for good without a fresh
+   * code, leaving the job unwatched forever.
+   */
+  hold(serverId: string): void {
+    this.holds.set(serverId, (this.holds.get(serverId) ?? 0) + 1);
+    const state = this.entries.get(serverId);
+    if (state) this.clearIdle(state);
+  }
+
+  release(serverId: string): void {
+    const count = this.holds.get(serverId) ?? 0;
+    if (count <= 1) this.holds.delete(serverId);
+    else this.holds.set(serverId, count - 1);
+    const state = this.entries.get(serverId);
+    if (state) this.scheduleIdle(state);
+  }
+
+  private isHeld(serverId: string): boolean {
+    return (this.holds.get(serverId) ?? 0) > 0;
+  }
+
   attachSession(serverId: string, session: string): void {
     const state = this.entries.get(serverId);
     if (!state) return;
@@ -158,6 +186,7 @@ export class ConnectionPool {
 
   async closeAll(): Promise<void> {
     this.closed = true;
+    this.holds.clear();
     for (const serverId of [...this.entries.keys()]) this.forget(serverId);
   }
 
@@ -175,7 +204,7 @@ export class ConnectionPool {
 
   private scheduleIdle(state: ConnectionState): void {
     const timeout = this.options.idleTimeoutMs();
-    if (timeout <= 0 || state.sessions.size > 0) return;
+    if (timeout <= 0 || state.sessions.size > 0 || this.isHeld(state.serverId)) return;
     this.clearIdle(state);
     state.idleTimer = setTimeout(() => {
       const current = this.entries.get(state.serverId);

@@ -29,11 +29,27 @@ function nextDelay(previous: number): number {
   return Math.min(MAX_DELAY, Math.round(previous * 1.7));
 }
 
-function sleep(ms: number, signal: { cancelled: boolean }): Promise<void> {
+export type CancelState = { cancelled: boolean; wake: (() => void) | null };
+
+/**
+ * Sleep that a cancelled watcher ends immediately. Without the wake hook a
+ * `job_kill` on the watcher could take up to a full 15-minute poll interval.
+ */
+export function sleep(ms: number, state: CancelState): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
+    if (state.cancelled) return resolve();
+    let timer: NodeJS.Timeout | null = setTimeout(() => {
+      timer = null;
+      state.wake = null;
+      resolve();
+    }, ms);
     timer.unref?.();
-    void signal;
+    state.wake = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      state.wake = null;
+      resolve();
+    };
   });
 }
 
@@ -74,7 +90,7 @@ export function startJobWatcher(
   }
   const agentLike = agent as { sessionId?: string; session?: { id?: string } } | undefined;
   const ownerSessionId = agentLike?.sessionId ?? agentLike?.session?.id;
-  const state = { cancelled: false };
+  const state: CancelState = { cancelled: false, wake: null };
   const errors: string[] = [];
   const start = (service: JobsService, ownerSessionId?: string): string => {
     return service.start({
@@ -83,6 +99,10 @@ export function startJobWatcher(
       ...(ownerSessionId ? { owner: ownerSessionId } : {}),
       outputLimitBytes: 4096,
         run(job: JobHandle): JobHooks {
+        // Pin the connection for the whole watch: on a 2FA host the idle reaper
+        // would otherwise drop the only authenticated session the watcher has.
+        const watched = loadJob(recordId);
+        if (watched) pool.hold(watched.server);
         const done = (async (): Promise<JobOutcome> => {
           let delay = FIRST_DELAY;
           let lastState = "";
@@ -91,10 +111,11 @@ export function startJobWatcher(
             const record = loadJob(recordId);
             if (!record) return { status: "failed", detail: "作业账本不存在" };
             if (isTerminal(record.state)) {
+              if (record.note) job.append(`${record.note}\n`);
               job.append(`${record.state} exit=${record.exitCode ?? "?"}\n`);
               return {
                 status: record.state === "completed" ? "completed" : record.state === "cancelled" ? "killed" : "failed",
-                detail: `${record.state} 退出码 ${record.exitCode ?? "未知"}`,
+                detail: `${record.state} 退出码 ${record.exitCode ?? "未知"}${record.note ? `（${record.note.split("\n")[0]}）` : ""}`,
                 result: `${record.server} ${record.id} ${record.state}`,
               };
             }
@@ -116,11 +137,14 @@ export function startJobWatcher(
             await sleep(delay, state);
             delay = nextDelay(delay);
           }
-        })();
+        })().finally(() => {
+          if (watched) pool.release(watched.server);
+        });
         done.catch(() => undefined);
         return {
           cancel() {
             state.cancelled = true;
+            state.wake?.();
           },
           done,
         };
