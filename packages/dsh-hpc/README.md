@@ -149,15 +149,31 @@ This matters on 2FA hosts: the authenticated connection is what lets the next po
 asking for a fresh code. Watchers survive a plugin reload — unfinished jobs in the ledger are
 re-armed on load — and `job_kill` stops a watcher immediately, even while it sleeps between polls.
 
-## Tools (17)
+Submit and let the watcher speak: `job_submit` returns at once with `watching: true`, and the session
+receives the completion notice. Do not wrap a job in a polling loop, and do not run a pipeline as a
+series of short jobs — chain the steps into one job (one script, or commands joined with `&&`) so a
+single watchdog and a single notice cover the whole pipeline. `waitMs` exists only for jobs known to
+finish within a minute: it is capped at 60 s, and the watchdog keeps running when it times out.
+
+## Tools (16)
 
 | Group | Tools |
 | --- | --- |
 | Servers | `server_list`, `server_add`, `server_remove`, `server_test`, `server_connect`, `server_disconnect` |
 | Shell | `shell_run`, `shell_close` |
-| Jobs | `job_submit`, `job_status`, `job_logs`, `job_wait`, `job_cancel` |
+| Jobs | `job_submit`, `job_status`, `job_logs`, `job_cancel` |
 | Transfer | `upload`, `download`, `transfer_queue` |
 | Network | `forward` |
+
+### Which tool when
+
+| The work is | Tool |
+| --- | --- |
+| A quick command on the login node — look, grep, small build, environment check | `shell_run` |
+| A compute task, or anything that must outlive the session (minutes to days) | `job_submit`, with the watchdog attached |
+| Checking on a submitted job | `job_status` (a snapshot — not a wait loop) |
+| Reading a job's output, running or finished | `job_logs` |
+| Stopping a submitted job | `job_cancel` |
 
 Destinations use explicit parent directories: `upload(localPath, remoteDir)` writes
 `<remoteDir>/<basename(localPath)>`, `download(remotePath, localDir)` writes

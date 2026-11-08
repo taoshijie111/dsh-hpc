@@ -7,8 +7,8 @@ import type { ConnectionPool } from "./core/pool.js";
 import { downloadWithResume, uploadWithResume } from "./core/transfer.js";
 import type { SessionRegistry } from "./core/session.js";
 import { execRemote, passwordRefFor } from "./core/ssh.js";
-import { cancelJob, loadJob, queryJobs, readJobLogs, saveJob, submitJob } from "./core/jobs.js";
-import { startJobWatcher } from "./core/watch.js";
+import { cancelJob, loadJob, queryJobs, readJobLogs, refreshJob, saveJob, submitJob } from "./core/jobs.js";
+import { isTerminal, startJobWatcher } from "./core/watch.js";
 import { runTransferQueue, startTransferJob, startTransferQueueJob, type QueueItem } from "./core/transfer-job.js";
 import { HpcError, PLUGIN_ID, findServer, type Config, type ServerSpec } from "./core/types.js";
 
@@ -311,7 +311,7 @@ export function registerTools(
     defineTool({
       name: "shell_run",
       description:
-        "Run a shell command in a named sticky session (created on demand). The session is a real login shell, so cd/exports/module loads persist for later calls; commands in one session run serially. Output is capped at maxBytes and marked truncated. A timeout restarts only that session and reports stateReset. Do not run interactive programs or long compute jobs here — use nohup/tmux or the scheduler.",
+        "Run one command on the login node for work that finishes in seconds to a couple of minutes: listing files, grep, small builds, environment checks before submitting a job. The named session is a real login shell, so cd/exports/module loads persist and commands run serially. Output is capped at maxBytes and marked truncated; a timeout restarts only that session and reports stateReset. Do not run compute jobs or long processes here — they occupy the login node and are not queued, and interactive programs never return. Anything expected to outlive a couple of minutes belongs in job_submit.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         command: { type: "string", required: true, description: "Shell command to run." },
@@ -577,7 +577,7 @@ export function registerTools(
     defineTool({
       name: "job_submit",
       description:
-        "Submit a long-running job on a server and return immediately. The server's type decides the route: a Slurm cluster gets sbatch (queued, survives disconnect), a bare-metal host gets a detached setsid/nohup process. Returns jobId; poll it with job_status, read output with job_logs, stop it with job_cancel. Scripts are staged under the server's jobRoot.",
+        "Submit a job that runs longer than a couple of minutes and return immediately: a Slurm cluster gets sbatch (queued, survives disconnect), a bare-metal host gets a detached setsid/nohup process. This is the tool for every compute task. A watchdog is attached by default: when the job ends the session receives a completion notice with its state and exit code, so never poll or block after submitting. Chain small pipeline steps into one job (one script, or commands joined with &&) instead of submitting a series of short jobs: one job means one watchdog and one notice. Read output at any time with job_logs; stop it with job_cancel. Set waitMs only when you are certain the job ends within a minute.",
       parameters: {
         server: { type: "string", required: true, description: "Server id from server_list." },
         command: { type: "string", description: "Shell command to run as the job body." },
@@ -592,6 +592,10 @@ export function registerTools(
         memory: { type: "string", description: "Memory request, e.g. 32G." },
         gpus: { type: "number", description: "GPUs requested (Slurm --gres)." },
         watch: { type: "boolean", description: "Watch the job locally and notify this session when it ends; defaults to true." },
+        waitMs: {
+          type: "number",
+          description: "Wait inline for at most this many milliseconds (capped at 60000) before returning; 0 returns at once. Only for jobs you are sure finish within a minute.",
+        },
       },
       output: objectOutput,
       async execute(args, exec) {
@@ -635,7 +639,39 @@ export function registerTools(
             console.error("[hpc] watcher registration threw", watchFailure);
           }
         }
-        return jsonSafe({ ...record, jobId: record.id, watching: Boolean(watchJobId), ...(watchError ? { watchError } : {}) });
+        // Bounded inline wait: only for jobs the caller is sure end quickly.
+        // The watchdog keeps running either way, so a timeout loses nothing.
+        const waitMs = Math.min(60_000, Math.max(0, args.waitMs ?? 0));
+        let waitedMs = 0;
+        let timedOut = false;
+        if (waitMs > 0) {
+          const startedAt = Date.now();
+          const deadline = startedAt + waitMs;
+          for (;;) {
+            if (isTerminal((loadJob(record.id) ?? record).state)) break;
+            const remaining = deadline - Date.now();
+            if (remaining <= 0 || exec.signal.aborted) {
+              timedOut = true;
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, remaining)));
+            try {
+              await refreshJob(ctx, pool, server, loadJob(record.id) ?? record);
+            } catch {
+              /* the watchdog owns the next attempt */
+            }
+          }
+          waitedMs = Date.now() - startedAt;
+        }
+        const finalRecord = waitMs > 0 ? (loadJob(record.id) ?? record) : record;
+        return jsonSafe({
+          ...finalRecord,
+          jobId: record.id,
+          watching: Boolean(watchJobId),
+          ...(watchJobId ? { note: "作业结束会自动通知本会话，提交后不要轮询" } : {}),
+          ...(waitMs > 0 ? { waitedMs, timedOut } : {}),
+          ...(watchError ? { watchError } : {}),
+        });
       },
     }),
   );
@@ -644,7 +680,7 @@ export function registerTools(
     defineTool({
       name: "job_status",
       description:
-        "Check job state (queued/running/completed/failed/cancelled/lost/unknown), exit code and log tail. With jobId, one job; with server only, all jobs of that server; with neither, all tracked jobs. Reads the host ledger and reconciles against the scheduler or the process.",
+        "Read a snapshot of tracked jobs — state (queued/running/completed/failed/cancelled/lost/unknown), exit code, paths and timestamps — re-checking the ledger against the scheduler or the process. With jobId, one job; with server only, that server's jobs; with neither, all tracked jobs. Do not call it in a loop to wait for a job: the watchdog notifies the session when a job ends.",
       parameters: {
         jobId: { type: "string", description: "Job id returned by job_submit." },
         server: { type: "string", description: "Filter by server id." },
@@ -678,7 +714,7 @@ export function registerTools(
     defineTool({
       name: "job_logs",
       description:
-        "Read a job's output incrementally. Pass offset from a previous call to continue. Defaults to 64 KiB per call and reports truncated when more remains. Read stdout or stderr separately.",
+        "Read a job's output incrementally; works while the job is still running. Pass offset from a previous call to continue. Defaults to 64 KiB per call and reports truncated when more remains. Read stdout or stderr separately. When the watchdog reports that the job ended, read it once to collect the result.",
       parameters: {
         jobId: { type: "string", required: true, description: "Job id returned by job_submit." },
         offset: { type: "number", description: "Byte offset to start from; use nextOffset from the previous call." },
@@ -702,42 +738,9 @@ export function registerTools(
 
   register(
     defineTool({
-      name: "job_wait",
-      description:
-        "Block until a job reaches a terminal state or the timeout expires (default 5 minutes). Use it for short jobs instead of polling; long-running jobs are announced by their watcher.",
-      parameters: {
-        jobId: { type: "string", required: true, description: "Job id returned by job_submit." },
-        timeoutMs: { type: "number", description: "Maximum wait in milliseconds; defaults to 300000." },
-      },
-      output: objectOutput,
-      async execute(args) {
-        const timeoutMs = args.timeoutMs ?? 300_000;
-        const deadline = Date.now() + timeoutMs;
-        for (;;) {
-          const jobs = await queryJobs(ctx, pool, getConfig().servers, { jobId: args.jobId });
-          const job = jobs[0];
-          if (!job) throw new HpcError(`Unknown job "${args.jobId}"`);
-          const terminal = ["completed", "failed", "cancelled", "lost"].includes(job.state);
-          if (terminal || Date.now() >= deadline) {
-            return jsonSafe({
-              jobId: job.id,
-              state: job.state,
-              exitCode: job.exitCode ?? null,
-              timedOut: !terminal,
-              waitedMs: timeoutMs - Math.max(0, deadline - Date.now()),
-            });
-          }
-          await new Promise((resolve) => setTimeout(resolve, Math.min(5000, Math.max(250, deadline - Date.now()))));
-        }
-      },
-    }),
-  );
-
-  register(
-    defineTool({
       name: "job_cancel",
       description:
-        "Cancel a running or queued job: scancel on Slurm, SIGTERM then SIGKILL on bare metal. The ledger records cancelled.",
+        "Cancel a queued or running job: scancel on Slurm, SIGTERM then SIGKILL on bare metal. The watchdog attached to the job is stopped too, and the ledger records cancelled.",
       parameters: {
         jobId: { type: "string", required: true, description: "Job id returned by job_submit." },
       },

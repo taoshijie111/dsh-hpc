@@ -136,8 +136,19 @@ try {
 
   check("job_submit registers a local watcher", bare.watching === true && watched.length >= 1 && String(bare.watchJobId).startsWith("hpc-job-"), `watch=${bare.watchJobId}`);
 
-  const waited = await call("job_wait", { jobId: bare.jobId, timeoutMs: 15000 });
-  check("job_wait returns the terminal state", waited.state === "completed" && waited.exitCode === 0 && waited.timedOut === false);
+  const quick = await call("job_submit", {
+    server: bareId,
+    command: "echo quick-done",
+    workdir: bareHome,
+    name: "quicktest",
+    waitMs: 15000,
+  });
+  cleanup.push(quick.jobId);
+  check(
+    "job_submit waitMs returns the terminal state",
+    quick.state === "completed" && quick.exitCode === 0 && quick.timedOut === false,
+    JSON.stringify({ state: quick.state, code: quick.exitCode, timedOut: quick.timedOut }),
+  );
 
   const bareLong = await call("job_submit", { server: bareId, command: "sleep 60", workdir: bareHome, name: "cancelme" });
   cleanup.push(bareLong.jobId);

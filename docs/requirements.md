@@ -301,6 +301,19 @@
 | 失败兜底 | 探针命令失败（空输出）不再当成"进程消失"，裸机返回 `unknown` 继续观察 |
 | 验证 | 新增 `test/job-watchdog.mjs` 28/28（判定表、scontrol 复核、控制器不可达、PID 复用、可取消 sleep、hold/release 与空闲回收）；`npm test` 全过 |
 
+### 9.13 工具面收敛：移除 job_wait，计算任务统一走看门狗（v1.9.8）
+
+| 项 | 实现 |
+| --- | --- |
+| 问题 | `job_wait` 的描述写着"阻塞等待代替轮询"，实际使用中模型提交后经常直接 `job_wait` 5 分钟：会话被占住，且每 250ms–5s 做一次远端探测；看门狗的异步通知能力反而闲置 |
+| 决策 | 删除 `job_wait`；计算任务一律 `job_submit` + 默认看门狗（结束异步通知），登录节点上的简单命令一律 `shell_run` |
+| 有界等待 | `job_submit` 新增 `waitMs`（默认 0，硬上限 60000）：只在"确信 1 分钟内结束"时使用；超时返回 `timedOut: true` 并交给看门狗继续盯，不丢监控 |
+| 流水线 | 描述中明确：小流水线合并成一个作业（单脚本或 `&&` 串联），一个作业配一个看门狗、一条完成通知，不要提交一串短作业 |
+| 描述重写 | `shell_run`（登录节点、秒级~分钟级、禁止交互/长任务）、`job_submit`（计算唯一入口、自动通知、提交后勿轮询）、`job_status`（快照，禁止循环等待）、`job_logs`（运行中可读）、`job_cancel`（同时撤销看门狗） |
+| 返回 | `job_submit` 返回 `watching` 与 `note: 作业结束会自动通知本会话，提交后不要轮询`；使用 `waitMs` 时附 `waitedMs` / `timedOut` |
+| 兼容 | 工具数 17 → 16；移除 `job_wait` 属破坏性变更，插件版本升到 0.2.0 |
+| 测试 | `tools-smoke` 改为 16 工具并断言 `job_wait` 已移除；`jobs-smoke` 用 `job_submit(waitMs)` 覆盖终态返回 |
+
 ## 10. 待定
 
 1. ~~多会话~~（已定：多会话，默认上限 4）。
@@ -324,3 +337,4 @@
 - v1.9.5 崩溃修复：shell 启动/重连失败只报错不退出宿主；就绪超时可配；新增 session 回归测试
 - v1.9.6 健壮性加固：转发 socket / SFTP / 临时连接 / 迟到 channel 的 error 兜底，onClose 归属判断，队列失败不再挂起，路由卸载清理
 - v1.9.7 作业看门狗加固：绑定 JOBID / PID+启动时间，unknown 熔断与 scontrol 复核，2FA 连接保活，lost 输出尾部，watcher 取消即时
+- v1.9.8 工具面收敛：移除 job_wait，job_submit 增加有界 waitMs，重写 shell_run / job_* 描述（计算任务统一走看门狗，流水线合并为一个作业）；插件 0.2.0
